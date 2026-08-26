@@ -1,0 +1,11 @@
+# build artifacts
+/cardinal-wings
+/dist/
+*.exe
+
+# editor / OS
+.DS_Store
+*.swp
+
+# generated config
+config.toml

@@ -1,0 +1,26 @@
+# cardinal-wings configuration
+#
+# Copy to /etc/cardinal-wings/config.toml and set at least one API key.
+# Status: in development — schema may change.
+
+[server]
+host = "127.0.0.1"     # loopback by default; external binds need keys + TLS
+port = 8080
+# tls_cert = "/etc/cardinal-wings/server.crt"
+# tls_key  = "/etc/cardinal-wings/server.key"
+
+# Panel credentials. role is "readonly" or "admin".
+[[keys]]
+name = "main"
+key = "change-me"
+role = "admin"
+
+# Remote cluster nodes, reached through their `cardinal serve` API.
+[[nodes]]
+name = "node-1"
+address = "http://10.0.0.2:2375"
+token = "that-node-serve-token"
+enabled = false
+
+[remote]
+metrics_requires_auth = true

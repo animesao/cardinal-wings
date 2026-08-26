@@ -1,0 +1,19 @@
+[Unit]
+Description=cardinal-wings REST API daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/cardinal-wings --config /etc/cardinal-wings/config.toml
+Restart=on-failure
+RestartSec=5s
+# Recommended: run as an unprivileged user that can read the config.
+# The daemon needs to reach cardinal's data dir; set User=cardinal if needed.
+# User=cardinal
+Environment=CARDINAL_DATA_DIR=/root/.cardinal
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

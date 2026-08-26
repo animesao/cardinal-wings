@@ -1,0 +1,18 @@
+version: 2
+
+# Keep GitHub Actions pinned to known-good majors: the action-gh-release,
+# setup-go, and download/upload-artifact majors must not flip silently.
+# Only patch/minor updates are offered for them.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
