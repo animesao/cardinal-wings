@@ -1,0 +1,16 @@
+# Normalize line endings; treat key files as text.
+* text=auto
+
+# Shell scripts must keep LF on checkout (systemd/Linux target).
+*.sh text eol=lf
+
+# These files must stay byte-identical for release checksums.
+LICENSE text eol=lf
+install.sh text eol=lf
+*.service text eol=lf
+*.toml text eol=lf
+*.yaml text eol=lf
+
+# Never diff generated/binary artifacts.
+*.tar.gz binary
+*.sha256 binary

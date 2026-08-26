@@ -130,3 +130,12 @@ with `./install.sh local`.
 
 See [SPEC.md](SPEC.md) §Phases. Containers → images → blueprints → streaming →
 cluster facade → panel + site.
+
+## Contributing & security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution guide and
+[SECURITY.md](SECURITY.md) for how to report a vulnerability.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
