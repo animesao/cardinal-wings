@@ -6,6 +6,7 @@ package tasks
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 )
@@ -18,10 +19,9 @@ const (
 	StatusRunning   Status = "running"
 	StatusSucceeded Status = "succeeded"
 	StatusFailed    Status = "failed"
-)
-
-// Task is one async operation.
+) // Task is one async operation.
 type Task struct {
+	Seq        uint64    `json:"-"`
 	ID         string    `json:"id"`
 	Kind       string    `json:"kind"`
 	Status     Status    `json:"status"`
@@ -53,7 +53,7 @@ func (m *Manager) Submit(kind string, fn func(ctx context.Context) (string, erro
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("task-%d", m.seq)
-	t := &Task{ID: id, Kind: kind, Status: StatusQueued, CreatedAt: time.Now()}
+	t := &Task{Seq: m.seq, ID: id, Kind: kind, Status: StatusQueued, CreatedAt: time.Now()}
 	m.tasks[id] = t
 	m.mu.Unlock()
 
@@ -102,10 +102,8 @@ func (m *Manager) List() []Task {
 	for _, t := range m.tasks {
 		out = append(out, *t)
 	}
-	// Newest first (insertion order is by seq, so reverse).
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
-	}
+	// Newest first.
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq > out[j].Seq })
 	return out
 }
 
