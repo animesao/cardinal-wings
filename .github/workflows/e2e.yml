@@ -1,0 +1,137 @@
+name: E2E (wings vs real cardinal)
+
+# Runs the actual wings daemon against a freshly built `cardinal serve` and
+# exercises the HTTP surface end to end. Container create/exec need privileges
+# and are not attempted here; the smoke covers everything that must not
+# regress without root: startup, auth, routing, node health, dashboard and
+# image/blueprint listing.
+#
+# cardinal lives in its own repository, so this workflow checks both out.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: wings smoke against cardinal
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARDINAL_BIN: /tmp/cardinal-bin/cardinal
+      WINGS_DATA_DIR: /tmp/wings-data
+    steps:
+      - name: checkout cardinal-wings
+        uses: actions/checkout@v4
+
+      - name: checkout cardinal
+        uses: actions/checkout@v4
+        with:
+          repository: animesao/cardinal
+          path: cardinal-src
+
+      - name: setup-go (1.26.6)
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.6"
+          cache: true
+
+      - name: build cardinal
+        run: |
+          cd cardinal-src
+          CGO_ENABLED=0 go build -trimpath -o "$CARDINAL_BIN" .
+          mkdir -p "$(dirname "$CARDINAL_BIN")"
+          mv cardinal "$CARDINAL_BIN" 2>/dev/null || true
+          ls -la "$(dirname "$CARDINAL_BIN")"
+
+      - name: build wings
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o /tmp/cardinal-wings .
+
+      - name: write wings config
+        run: |
+          mkdir -p /tmp/wings-etc
+          cat > /tmp/wings-etc/config.toml <<'EOF'
+          [server]
+          host = "127.0.0.1"
+          port = 18080
+
+          [[keys]]
+          name = "test-admin"
+          key = "test-admin-key"
+          role = "admin"
+          EOF
+
+      - name: run wings (background)
+        run: |
+          export PATH="/tmp/cardinal-bin:$PATH"
+          WINGS_DATA_DIR=/tmp/wings-data /tmp/cardinal-wings --config /tmp/wings-etc/config.toml > /tmp/wings.log 2>&1 &
+          echo $! > /tmp/wings.pid
+          # Wait for wings to come up.
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:18080/v1/ping > /dev/null 2>&1; then
+              echo "wings is up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "wings failed to start; log tail:" >&2
+          tail -50 /tmp/wings.log >&2
+          exit 1
+
+      - name: exercise the API
+        run: |
+          set -euo pipefail
+          AUTH="Authorization: Bearer test-admin-key"
+          BASE="http://127.0.0.1:18080"
+
+          echo "== ping =="
+          test "$(curl -sf "$BASE/v1/ping")" = "pong"
+
+          echo "== version =="
+          curl -sf -H "$AUTH" "$BASE/v1/version" | grep -q '"name":"cardinal-wings"'
+
+          echo "== self (role) =="
+          curl -sf -H "$AUTH" "$BASE/v1/self" | grep -q '"role":"admin"'
+
+          echo "== nodes =="
+          curl -sf -H "$AUTH" "$BASE/v1/nodes" | grep -q '"local"'
+
+          echo "== system/info =="
+          curl -sf -H "$AUTH" "$BASE/v1/system/info" | grep -q '"nodes"'
+
+          echo "== images list =="
+          curl -sf -H "$AUTH" "$BASE/v1/images" | grep -q '"images"'
+
+          echo "== blueprints catalog =="
+          curl -sf -H "$AUTH" "$BASE/v1/blueprints" | grep -q '"blueprints"'
+
+          echo "== tasks =="
+          curl -sf -H "$AUTH" "$BASE/v1/tasks" | grep -q '"tasks"'
+
+          echo "== auth rejection =="
+          code=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/v1/containers")
+          test "$code" = "401" || { echo "expected 401, got $code"; exit 1; }
+
+          echo "== unknown node =="
+          code=$(curl -s -o /dev/null -w "%{http_code}" -H "$AUTH" "$BASE/v1/containers?node=ghost")
+          test "$code" = "404" || { echo "expected 404, got $code"; exit 1; }
+
+          echo "== error envelope shape =="
+          curl -sf -H "$AUTH" "$BASE/v1/tasks/does-not-exist" | grep -q '"code"'
+
+          echo "ALL E2E CHECKS PASSED"
+
+      - name: wings log on failure
+        if: failure()
+        run: tail -100 /tmp/wings.log || true

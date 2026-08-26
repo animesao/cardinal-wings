@@ -161,6 +161,46 @@ func TestPaginate(t *testing.T) {
 	}
 }
 
+func TestSortContainers(t *testing.T) {
+	list := []runtime.Summary{
+		{Name: "b", Status: "exited", CreatedAt: "2026-01-01"},
+		{Name: "a", Status: "running", CreatedAt: "2026-01-03"},
+		{Name: "c", Status: "running", CreatedAt: "2026-01-02"},
+	}
+
+	// Default: by name asc.
+	q, _ := url.ParseQuery("")
+	got := append([]runtime.Summary{}, list...)
+	sortContainers(got, q)
+	if got[0].Name != "a" || got[2].Name != "c" {
+		t.Errorf("name asc = %v", gotNames(got))
+	}
+
+	// By status asc.
+	q2, _ := url.ParseQuery("sort=status")
+	got2 := append([]runtime.Summary{}, list...)
+	sortContainers(got2, q2)
+	if got2[0].Status != "exited" {
+		t.Errorf("status asc first = %s, want exited", got2[0].Status)
+	}
+
+	// By created_at desc.
+	q3, _ := url.ParseQuery("sort=created_at&order=desc")
+	got3 := append([]runtime.Summary{}, list...)
+	sortContainers(got3, q3)
+	if got3[0].CreatedAt != "2026-01-03" {
+		t.Errorf("created_at desc first = %s, want 2026-01-03", got3[0].CreatedAt)
+	}
+}
+
+func gotNames(list []runtime.Summary) []string {
+	out := make([]string, len(list))
+	for i, s := range list {
+		out[i] = s.Name
+	}
+	return out
+}
+
 func TestCodeForStatus(t *testing.T) {
 	if codeForStatus(http.StatusNotFound) != ErrNotFound {
 		t.Error("404 should map to not_found")

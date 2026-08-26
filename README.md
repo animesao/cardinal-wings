@@ -53,13 +53,17 @@ cardinal-wings/
 └── Makefile
 ```
 
-Live v1 endpoints so far: `/v1/ping`, `/v1/version`, `/v1/self` (current
-key's role), `/v1/system/info` (dashboard aggregate), `/v1/containers`
-(list with `?state=`/`?image=`/`?search=` filters, create, inspect, start/
-stop/restart/kill, remove, stats, logs with SSE `follow`, exec), `/v1/images`
-(list/inspect/remove/pull/search/tag/push), `/v1/blueprints` (list/inspect/
-install/uninstall), `/v1/services` (list/create/scale/remove),
-`/v1/functions` (list/deploy/invoke/remove) and `/v1/nodes` + `/v1/cluster/*`.
+Live v1 endpoints: `/v1/ping`, `/v1/version`, `/v1/self`, `/v1/system/info`
+(dashboard aggregate), `/v1/metrics` (Prometheus, admin), `/v1/events` (SSE
+container events), `/v1/containers` (list with `?state=`/`?image=`/`?search=`
+filters + `?sort=`/`?limit=`/`?offset=`, create, inspect, lifecycle, stats,
+logs SSE, exec, exec/stream SSE, interactive terminal via SSE+input),
+`/v1/images` (list/inspect/remove/pull with live progress/tag/push/search),
+`/v1/blueprints` (async install/uninstall), `/v1/tasks` (async jobs,
+persisted), `/v1/services`, `/v1/functions`, `/v1/nodes` + `/v1/cluster/*`.
+
+An **OpenAPI schema** lives in [docs/openapi.yaml](docs/openapi.yaml) — a
+panel client can be generated from it.
 
 Every resource endpoint accepts `?node=<name>` to route to a specific
 cluster node (default: local). Errors are uniform:
@@ -72,6 +76,16 @@ make build
 ./cardinal-wings --config config.example.toml
 curl -s localhost:8080/v1/ping   # pong
 ```
+
+## Security
+
+- Bearer auth with per-key roles (`readonly`/`admin`) and **per-key rate
+  limiting**.
+- Admin mutations are written to an **audit log** (`wings-audit.jsonl`, set
+  `WINGS_DATA_DIR` to relocate).
+- TLS supported in the config; `WINGS_TLS=1` in install.sh generates a
+  self-signed cert and wires it up.
+- Loopback-only by default; external binds require keys + TLS.
 
 ## Releases & CI (GitHub Actions)
 

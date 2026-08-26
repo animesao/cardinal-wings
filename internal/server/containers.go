@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,6 +28,7 @@ func containerRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 				return
 			}
 			filtered := filterContainers(list, r.URL.Query())
+			sortContainers(filtered, r.URL.Query())
 			page := paginate(filtered, r.URL.Query())
 			writeJSON(w, http.StatusOK, map[string]interface{}{
 				"containers": page.items,
@@ -84,6 +86,29 @@ func filterContainers(list []runtime.Summary, q url.Values) []runtime.Summary {
 	return out
 }
 
+// sortContainers orders a list by ?sort=name|status|created_at (default name)
+// and ?order=asc|desc (default asc).
+func sortContainers(list []runtime.Summary, q url.Values) {
+	sortBy := q.Get("sort")
+	desc := q.Get("order") == "desc"
+	less := func(i, j int) bool {
+		a, b := list[i], list[j]
+		switch sortBy {
+		case "status":
+			return a.Status < b.Status
+		case "created_at":
+			return a.CreatedAt < b.CreatedAt
+		default:
+			return a.Name < b.Name
+		}
+	}
+	if desc {
+		sort.SliceStable(list, func(i, j int) bool { return less(j, i) })
+	} else {
+		sort.SliceStable(list, less)
+	}
+}
+
 // pageResult carries a sliced page plus the requested window.
 type pageResult struct {
 	items  []runtime.Summary
@@ -131,7 +156,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input":
 		return true
 	}
 	return action == "" && method == http.MethodDelete
@@ -191,6 +216,15 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "exec/stream" && r.Method == http.MethodPost:
 		handleContainerExecStream(w, r, ref)
+
+	case action == "terminal" && r.Method == http.MethodPost:
+		handleTerminalOpen(w, r)
+
+	case action == "terminal/input" && r.Method == http.MethodPost:
+		handleTerminalInput(w, r)
+
+	case action == "terminal/stream" && r.Method == http.MethodGet:
+		handleTerminalStream(w, r)
 
 	case (action == "start" || action == "stop" || action == "restart" || action == "kill") && r.Method == http.MethodPost:
 		if err := c.Action(r.Context(), ref, action); err != nil {

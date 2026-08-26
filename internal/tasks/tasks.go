@@ -5,7 +5,10 @@ package tasks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -30,6 +33,7 @@ type Task struct {
 	FinishedAt time.Time `json:"finished_at,omitempty"`
 	Error      string    `json:"error,omitempty"`
 	Output     string    `json:"output,omitempty"`
+	Progress   []string  `json:"progress,omitempty"`
 }
 
 // Manager runs and tracks async tasks.
@@ -38,6 +42,7 @@ type Manager struct {
 	tasks map[string]*Task
 	seq   uint64
 	ttl   time.Duration
+	path  string // optional JSON persistence file
 }
 
 // NewManager builds a task manager; ttl controls how long finished tasks are
@@ -46,10 +51,66 @@ func NewManager(ttl time.Duration) *Manager {
 	return &Manager{tasks: map[string]*Task{}, ttl: ttl}
 }
 
+// WithPersistence writes finished tasks to path so they survive a daemon
+// restart. Returns the manager for chaining.
+func (m *Manager) WithPersistence(path string) *Manager {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.path = path
+	if data, err := os.ReadFile(path); err == nil {
+		var saved []Task
+		if json.Unmarshal(data, &saved) == nil {
+			for _, t := range saved {
+				m.tasks[t.ID] = &t
+				if t.Seq >= m.seq {
+					m.seq = t.Seq
+				}
+			}
+		}
+	}
+	return m
+}
+
+// saveLocked writes the current tasks to the persistence file, if configured.
+// Only finished tasks are persisted (running ones die with the process).
+func (m *Manager) saveLocked() {
+	if m.path == "" {
+		return
+	}
+	var out []Task
+	for _, t := range m.tasks {
+		if !t.FinishedAt.IsZero() {
+			out = append(out, *t)
+		}
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(m.path), 0700); err != nil {
+		return
+	}
+	_ = os.WriteFile(m.path, data, 0600)
+}
+
+// ProgressFunc receives live progress lines while a task runs.
+type ProgressFunc func(line string)
+
 // Submit queues a job and returns its id. The job runs in a background
 // goroutine; fn receives a context that is cancelled when the task is
 // cancelled via Cancel.
 func (m *Manager) Submit(kind string, fn func(ctx context.Context) (string, error)) string {
+	return m.submit(kind, nil, fn)
+}
+
+// SubmitLines is Submit for jobs that emit live progress: fn is called with
+// the task context and a callback; each line the callback receives is
+// appended to the task's Progress slice so a panel can show a live log.
+func (m *Manager) SubmitLines(kind string, fn func(ctx context.Context, onLine ProgressFunc) (string, error)) string {
+	return m.submit(kind, fn, nil)
+}
+
+func (m *Manager) submit(kind string, fnLines func(ctx context.Context, onLine ProgressFunc) (string, error), fn func(ctx context.Context) (string, error)) string {
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("task-%d", m.seq)
@@ -65,7 +126,17 @@ func (m *Manager) Submit(kind string, fn func(ctx context.Context) (string, erro
 		t.StartedAt = time.Now()
 		m.mu.Unlock()
 
-		out, err := fn(ctx)
+		var out string
+		var err error
+		if fnLines != nil {
+			out, err = fnLines(ctx, func(line string) {
+				m.mu.Lock()
+				t.Progress = append(t.Progress, line)
+				m.mu.Unlock()
+			})
+		} else {
+			out, err = fn(ctx)
+		}
 
 		m.mu.Lock()
 		t.FinishedAt = time.Now()
@@ -76,6 +147,7 @@ func (m *Manager) Submit(kind string, fn func(ctx context.Context) (string, erro
 			t.Status = StatusSucceeded
 			t.Output = out
 		}
+		m.saveLocked()
 		m.mu.Unlock()
 	}()
 
@@ -120,4 +192,5 @@ func (m *Manager) Prune() {
 			delete(m.tasks, id)
 		}
 	}
+	m.saveLocked()
 }

@@ -17,6 +17,10 @@ PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="${PREFIX}/bin"
 CONF_DIR="/etc/cardinal-wings"
 
+# Set WINGS_TLS=1 to generate a self-signed certificate and enable TLS in the
+# config. Off by default (loopback-only setups don't need it).
+WINGS_TLS="${WINGS_TLS:-0}"
+
 # Detect OS and architecture for the release asset name.
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -57,13 +61,30 @@ else
 fi
 
 echo "==> installing config"
+TLS_CFG=""
+if [ "${WINGS_TLS}" = "1" ]; then
+    echo "==> generating self-signed TLS certificate"
+    CERT="${CONF_DIR}/server.crt"
+    KEY="${CONF_DIR}/server.key"
+    if [ ! -f "${CERT}" ] || [ ! -f "${KEY}" ]; then
+        openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=cardinal-wings" \
+            -keyout "${KEY}" -out "${CERT}" 2>/dev/null
+        chmod 600 "${KEY}" "${CERT}"
+    fi
+    TLS_CFG=$'\n# TLS\ntls_cert = "'"${CERT}"'"\ntls_key  = "'"${KEY}"'"\n'
+fi
+
 if [ ! -f "${CONF_DIR}/config.toml" ]; then
     mkdir -p "${CONF_DIR}"
     chmod 700 "${CONF_DIR}"
     install -m 600 /dev/null "${CONF_DIR}/config.toml"
+    if [ -n "${TLS_CFG}" ]; then
+        printf '%s\n' "${TLS_CFG}" >> "${CONF_DIR}/config.toml"
+    fi
     echo "    wrote empty ${CONF_DIR}/config.toml — edit it to add keys"
 else
     echo "    ${CONF_DIR}/config.toml already present — leaving it untouched"
+    echo "    (set tls_cert/tls_key manually to enable TLS)"
 fi
 install -m 600 "${CONF_DIR}/config.toml" "${CONF_DIR}/config.example.toml" 2>/dev/null || true
 

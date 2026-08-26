@@ -22,3 +22,14 @@ func RoleFrom(ctx context.Context) (config.Role, bool) {
 	role, ok := ctx.Value(ctxRole).(config.Role)
 	return role, ok
 }
+
+// WithKeyName stores the authenticated key's name on the context.
+func WithKeyName(ctx context.Context, name string) context.Context {
+	return context.WithValue(ctx, ctxKeyName, name)
+}
+
+// KeyNameFrom reads the key name stored by Authenticate.
+func KeyNameFrom(ctx context.Context) (string, bool) {
+	name, ok := ctx.Value(ctxKeyName).(string)
+	return name, ok
+}

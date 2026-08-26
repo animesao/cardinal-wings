@@ -1,0 +1,544 @@
+openapi: 3.0.3
+info:
+  title: cardinal-wings API
+  description: >
+    REST API daemon for managing cardinal over HTTP. Panel-oriented surface
+    over cardinal's Docker-compatible API, with multi-node routing (`?node=`),
+    async tasks, streaming logs/exec, metrics and role-based auth.
+  version: "0.2.0-dev"
+servers:
+  - url: http://127.0.0.1:8080
+security:
+  - bearerAuth: []
+tags:
+  - name: system
+  - name: containers
+  - name: images
+  - name: blueprints
+  - name: tasks
+  - name: services
+  - name: functions
+  - name: cluster
+paths:
+  /v1/ping:
+    get:
+      tags: [system]
+      security: []
+      summary: Liveness check
+      responses:
+        "200":
+          description: pong
+          content:
+            text/plain:
+              schema: { type: string }
+  /v1/version:
+    get:
+      tags: [system]
+      summary: Wings version
+      responses:
+        "200":
+          description: Version info
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Version" }
+  /v1/self:
+    get:
+      tags: [system]
+      summary: Role of the current API key
+      responses:
+        "200":
+          description: Auth introspection
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Self" }
+  /v1/nodes:
+    get:
+      tags: [cluster]
+      summary: Cluster nodes with live health
+      responses:
+        "200":
+          description: Node list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  nodes:
+                    type: array
+                    items: { $ref: "#/components/schemas/Node" }
+  /v1/system/info:
+    get:
+      tags: [system]
+      summary: Dashboard aggregate per node
+      responses:
+        "200":
+          description: Per-node summary and totals
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SystemInfo" }
+  /v1/metrics:
+    get:
+      tags: [system]
+      summary: Prometheus metrics (admin only)
+      responses:
+        "200":
+          description: Prometheus text format
+          content:
+            text/plain:
+              schema: { type: string }
+  /v1/events:
+    get:
+      tags: [system]
+      summary: Container events as SSE stream
+      responses:
+        "200":
+          description: text/event-stream of container events
+  /v1/containers:
+    get:
+      tags: [containers]
+      summary: List containers
+      parameters:
+        - { name: all, in: query, schema: { type: boolean } }
+        - { name: state, in: query, schema: { type: string, enum: [running, stopped] } }
+        - { name: image, in: query, schema: { type: string } }
+        - { name: search, in: query, schema: { type: string } }
+        - { name: sort, in: query, schema: { type: string, enum: [name, status, created_at] } }
+        - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { name: limit, in: query, schema: { type: integer, default: 100 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+        - { name: node, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: Container page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContainerPage" }
+    post:
+      tags: [containers]
+      summary: Create a container (admin)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRequest" }
+      responses:
+        "201": { description: Created }
+  /v1/containers/{id}:
+    get:
+      tags: [containers]
+      summary: Inspect a container
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: node, in: query, schema: { type: string } }
+      responses:
+        "200": { description: Container detail }
+    delete:
+      tags: [containers]
+      summary: Remove a container (admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: force, in: query, schema: { type: boolean } }
+      responses:
+        "200": { description: Removed }
+  /v1/containers/{id}/start:
+    post:
+      tags: [containers]
+      summary: Start (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ok } }
+  /v1/containers/{id}/stop:
+    post:
+      tags: [containers]
+      summary: Stop (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ok } }
+  /v1/containers/{id}/restart:
+    post:
+      tags: [containers]
+      summary: Restart (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ok } }
+  /v1/containers/{id}/kill:
+    post:
+      tags: [containers]
+      summary: Kill (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ok } }
+  /v1/containers/{id}/stats:
+    get:
+      tags: [containers]
+      summary: Stats
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: Docker stats schema } }
+  /v1/containers/{id}/logs:
+    get:
+      tags: [containers]
+      summary: Logs (tail; follow=1 → SSE)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: tail, in: query, schema: { type: string } }
+        - { name: follow, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Log text or SSE stream
+  /v1/containers/{id}/exec:
+    post:
+      tags: [containers]
+      summary: Run a command (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecRequest" }
+      responses: { "200": { description: exec id } }
+  /v1/containers/{id}/exec/stream:
+    post:
+      tags: [containers]
+      summary: Run a command and stream output as SSE (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExecRequest" }
+      responses: { "200": { description: SSE stream } }
+  /v1/containers/{id}/terminal:
+    post:
+      tags: [containers]
+      summary: Open an interactive shell session (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: session opened } }
+  /v1/containers/{id}/terminal/input:
+    post:
+      tags: [containers]
+      summary: Write to the terminal session stdin (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data: { type: string }
+      responses: { "200": { description: ok } }
+  /v1/containers/{id}/terminal/stream:
+    get:
+      tags: [containers]
+      summary: Read the terminal session output (SSE)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: SSE stream } }
+  /v1/images:
+    get:
+      tags: [images]
+      summary: List images
+      responses:
+        "200":
+          description: Image list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  images: { type: array }
+  /v1/images/search:
+    get:
+      tags: [images]
+      summary: Search Docker Hub
+      parameters: [{ name: q, in: query, required: true, schema: { type: string } }]
+      responses: { "200": { description: search results } }
+  /v1/images/{ref}:
+    get:
+      tags: [images]
+      summary: Inspect an image
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: image detail } }
+    delete:
+      tags: [images]
+      summary: Remove an image (admin)
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/images/{ref}/pull:
+    post:
+      tags: [images]
+      summary: Pull an image (admin, async task)
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                image: { type: string }
+                platform: { type: string }
+      responses:
+        "202":
+          description: Accepted, returns task_id
+  /v1/images/{ref}/tag:
+    post:
+      tags: [images]
+      summary: Tag an image (admin)
+      parameters:
+        - { name: ref, in: path, required: true, schema: { type: string } }
+        - { name: repo, in: query, required: true, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string } }
+      responses: { "200": { description: tagged } }
+  /v1/images/{ref}/push:
+    post:
+      tags: [images]
+      summary: Push an image (admin)
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: pushed } }
+  /v1/blueprints:
+    get:
+      tags: [blueprints]
+      summary: Blueprint catalog
+      responses:
+        "200":
+          description: Catalog
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  blueprints: { type: array }
+  /v1/blueprints/{name}:
+    get:
+      tags: [blueprints]
+      summary: Blueprint detail with template
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: blueprint + template } }
+  /v1/blueprints/{name}/install:
+    post:
+      tags: [blueprints]
+      summary: Install (admin, async task)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory: { type: string }
+                cpus: { type: string }
+                env: { type: array, items: { type: string } }
+                yes: { type: boolean }
+      responses:
+        "202":
+          description: Accepted, returns task_id
+  /v1/blueprints/{name}/uninstall:
+    post:
+      tags: [blueprints]
+      summary: Uninstall (admin, async task)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses:
+        "202":
+          description: Accepted, returns task_id
+  /v1/tasks:
+    get:
+      tags: [tasks]
+      summary: List tasks (newest first)
+      responses:
+        "200":
+          description: Task list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items: { $ref: "#/components/schemas/Task" }
+  /v1/tasks/{id}:
+    get:
+      tags: [tasks]
+      summary: Poll a task
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses:
+        "200":
+          description: Task state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Task" }
+  /v1/services:
+    get:
+      tags: [services]
+      summary: List services
+      responses: { "200": { description: raw CLI output } }
+    post:
+      tags: [services]
+      summary: Create a service (admin)
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServiceCreate" }
+      responses: { "201": { description: created } }
+  /v1/services/{name}/scale:
+    post:
+      tags: [services]
+      summary: Scale a service (admin)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                replicas: { type: integer }
+      responses: { "200": { description: scaled } }
+  /v1/services/{name}:
+    delete:
+      tags: [services]
+      summary: Remove a service (admin)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/functions:
+    get:
+      tags: [functions]
+      summary: List functions
+      responses: { "200": { description: raw CLI output } }
+    post:
+      tags: [functions]
+      summary: Deploy a function (admin)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                image: { type: string }
+      responses: { "201": { description: deployed } }
+  /v1/functions/{name}/invoke:
+    post:
+      tags: [functions]
+      summary: Invoke a function (admin)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                data: { type: string }
+      responses: { "200": { description: invocation output } }
+  /v1/functions/{name}:
+    delete:
+      tags: [functions]
+      summary: Remove a function (admin)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/cluster/health:
+    get:
+      tags: [cluster]
+      summary: Cluster health
+      responses: { "200": { description: health } }
+  /v1/cluster/replicas:
+    get:
+      tags: [cluster]
+      summary: Replica list
+      responses: { "200": { description: replicas } }
+  /v1/cluster/containers:
+    get:
+      tags: [cluster]
+      summary: Containers across the cluster view
+      responses: { "200": { description: containers } }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    Version:
+      type: object
+      properties:
+        name: { type: string }
+        version: { type: string }
+        status: { type: string }
+    Self:
+      type: object
+      properties:
+        authenticated: { type: boolean }
+        role: { type: string, enum: [readonly, admin] }
+        admin: { type: boolean }
+    Node:
+      type: object
+      properties:
+        name: { type: string }
+        url: { type: string }
+        status: { type: string }
+        local: { type: boolean }
+        checked_at: { type: string }
+    SystemInfo:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            type: object
+            properties:
+              name: { type: string }
+              status: { type: string }
+              running: { type: integer }
+              stopped: { type: integer }
+              total: { type: integer }
+              images: { type: integer }
+              ncpu: { type: integer }
+              mem_total_bytes: { type: integer }
+        running: { type: integer }
+        total: { type: integer }
+    ContainerPage:
+      type: object
+      properties:
+        containers: { type: array }
+        total: { type: integer }
+        limit: { type: integer }
+        offset: { type: integer }
+    CreateRequest:
+      type: object
+      required: [image]
+      properties:
+        image: { type: string }
+        name: { type: string }
+        ports: { type: array, items: { type: string } }
+        env: { type: array, items: { type: string } }
+        volumes: { type: array, items: { type: string } }
+        restart: { type: string }
+        memory: { type: string }
+        cpus: { type: number }
+        labels: { type: object, additionalProperties: { type: string } }
+    ExecRequest:
+      type: object
+      required: [Cmd]
+      properties:
+        Cmd: { type: array, items: { type: string } }
+        AttachStdin: { type: boolean }
+        AttachStdout: { type: boolean }
+        AttachStderr: { type: boolean }
+        Tty: { type: boolean }
+    Task:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { type: string }
+        status: { type: string, enum: [queued, running, succeeded, failed] }
+        created_at: { type: string }
+        started_at: { type: string }
+        finished_at: { type: string }
+        error: { type: string }
+        output: { type: string }
+        progress: { type: array, items: { type: string } }
+    ServiceCreate:
+      type: object
+      required: [name, image]
+      properties:
+        name: { type: string }
+        image: { type: string }
+        replicas: { type: integer }
+        ports: { type: array, items: { type: string } }
+        env: { type: array, items: { type: string } }
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code: { type: string }
+            message: { type: string }

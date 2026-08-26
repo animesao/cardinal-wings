@@ -17,19 +17,23 @@ type ctxKey int
 
 const (
 	ctxRole ctxKey = iota
+	ctxKeyName
 )
 
 // Middleware bundles the auth helpers for an http.Server chain.
 type Middleware struct {
 	cfg *config.Config
-	// remote ip rate limiting
+	// rate limiting: per remote ip and per API key
 	mu      sync.Mutex
 	clients map[string]*bucket
+	keys    map[string]*bucket
 }
 
 const (
 	rateTPS    = 25.0
 	burst      = 50
+	keyRateTPS = 10.0
+	keyBurst   = 30
 	maxClients = 4096
 )
 
@@ -40,7 +44,7 @@ type bucket struct {
 
 // New builds a Middleware from config.
 func New(cfg *config.Config) *Middleware {
-	return &Middleware{cfg: cfg, clients: map[string]*bucket{}}
+	return &Middleware{cfg: cfg, clients: map[string]*bucket{}, keys: map[string]*bucket{}}
 }
 
 // Authenticate gates the request on a valid API key and embeds the role.
@@ -57,7 +61,10 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 			writeError(w, http.StatusForbidden, "invalid API key")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(withRole(r, role)))
+		name, _ := m.cfg.KeyName(auth[len(prefix):])
+		ctx := WithRole(r.Context(), role)
+		ctx = WithKeyName(ctx, name)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
@@ -93,23 +100,65 @@ func (m *Middleware) RateLimit(next http.Handler) http.Handler {
 			b = &bucket{tokens: burst, last: time.Now()}
 			m.clients[host] = b
 		}
+		if !takeLocked(b) {
+			m.mu.Unlock()
+			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
+			return
+		}
+		m.mu.Unlock()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RateLimitKey is a per-key token bucket that applies even on loopback, so a
+// shared key cannot hammer the API from anywhere. The key name (or the raw
+// bearer token) is the bucket id.
+func (m *Middleware) RateLimitKey(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		const prefix = "Bearer "
+		id := "anon"
+		if len(auth) > len(prefix) && auth[:len(prefix)] == prefix {
+			if name, ok := KeyNameFrom(r.Context()); ok && name != "" {
+				id = "key:" + name
+			} else {
+				id = "key:" + auth[len(prefix):]
+			}
+		}
+		m.mu.Lock()
+		b, ok := m.keys[id]
+		if !ok {
+			if len(m.keys) >= maxClients {
+				m.pruneKeysLocked(10 * time.Minute)
+			}
+			b = &bucket{tokens: keyBurst, last: time.Now()}
+			m.keys[id] = b
+		}
+		// Per-key bucket refills at its own rate.
 		now := time.Now()
-		b.tokens += now.Sub(b.last).Seconds() * rateTPS
-		if b.tokens > burst {
-			b.tokens = burst
+		b.tokens += now.Sub(b.last).Seconds() * keyRateTPS
+		if b.tokens > keyBurst {
+			b.tokens = keyBurst
 		}
 		b.last = now
 		if b.tokens < 1 {
 			m.mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			_, _ = w.Write([]byte(`{"error":"rate limit exceeded"}` + "\n"))
+			writeError(w, http.StatusTooManyRequests, "key rate limit exceeded")
 			return
 		}
 		b.tokens--
 		m.mu.Unlock()
 		next.ServeHTTP(w, r)
 	})
+}
+
+func (m *Middleware) pruneKeysLocked(maxAge time.Duration) {
+	cutoff := time.Now().Add(-maxAge)
+	for k, v := range m.keys {
+		if v.last.Before(cutoff) {
+			delete(m.keys, k)
+		}
+	}
 }
 
 func (m *Middleware) pruneLocked(maxAge time.Duration) {
@@ -119,6 +168,21 @@ func (m *Middleware) pruneLocked(maxAge time.Duration) {
 			delete(m.clients, k)
 		}
 	}
+}
+
+// takeLocked refills and consumes one token from a bucket.
+func takeLocked(b *bucket) bool {
+	now := time.Now()
+	b.tokens += now.Sub(b.last).Seconds() * rateTPS
+	if b.tokens > burst {
+		b.tokens = burst
+	}
+	b.last = now
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
 }
 
 // CORS restricts browser cross-origin access to loopback unless extra origins

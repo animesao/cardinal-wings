@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -53,6 +54,13 @@ func Run(cfg *config.Config) error {
 	defer hcCancel()
 	checker.start(hcCtx)
 
+	// Audit log of admin mutations.
+	if dir := os.Getenv("WINGS_DATA_DIR"); dir != "" {
+		initAudit(filepath.Join(dir, "wings-audit.jsonl"))
+	} else {
+		initAudit("wings-audit.jsonl")
+	}
+
 	mw := auth.New(cfg)
 	mux := http.NewServeMux()
 
@@ -62,6 +70,7 @@ func Run(cfg *config.Config) error {
 	mux.HandleFunc("/v1/system/info", handleSystemInfo)
 	mux.HandleFunc("/v1/self", handleSelf)
 	mux.HandleFunc("/v1/metrics", handleMetrics)
+	mux.HandleFunc("/v1/events", handleEvents)
 	tasksRoutes(mux)
 
 	// --- resource endpoints (behind auth) ---
@@ -71,9 +80,12 @@ func Run(cfg *config.Config) error {
 	servicesRoutes(mux, mw)
 	clusterRoutes(mux)
 
-	// The authenticated chain: rate limit -> CORS -> bearer auth.
+	// The authenticated chain: CORS -> per-key rate limit -> per-IP rate
+	// limit -> bearer auth -> audit.
 	var handler http.Handler = mux
 	handler = mw.Authenticate(handler)
+	handler = auditMiddleware(handler)
+	handler = mw.RateLimitKey(handler)
 	handler = mw.RateLimit(handler)
 	handler = mw.CORS(handler)
 

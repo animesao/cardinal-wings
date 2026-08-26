@@ -230,6 +230,17 @@ func (c *Config) Authorize(bearer string) (Role, bool) {
 // AdminOnly reports whether a role may perform mutating operations.
 func (r Role) AdminOnly() bool { return r == RoleAdmin }
 
+// KeyName returns the name of the API key matching the bearer token, or false
+// if the token is not a configured key.
+func (c *Config) KeyName(bearer string) (string, bool) {
+	for _, k := range c.Keys {
+		if subtle.ConstantTimeCompare([]byte(bearer), []byte(k.Key)) == 1 {
+			return k.Name, true
+		}
+	}
+	return "", false
+}
+
 // WriteExample writes a documented empty config to path (used by install/docs).
 func WriteExample(path string) error {
 	dir := filepath.Dir(path)

@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -9,8 +11,15 @@ import (
 )
 
 // taskMgr is the process-wide async job manager. Finished tasks are pruned
-// after an hour so the panel can poll without unbounded growth.
-var taskMgr = tasks.NewManager(1 * time.Hour)
+// after an hour and persisted to a JSON file (surviving restarts).
+var taskMgr = tasks.NewManager(1 * time.Hour).WithPersistence(taskDataPath())
+
+func taskDataPath() string {
+	if dir := os.Getenv("WINGS_DATA_DIR"); dir != "" {
+		return filepath.Join(dir, "wings-tasks.json")
+	}
+	return "wings-tasks.json"
+}
 
 // tasksRoutes mounts /v1/tasks (list) and /v1/tasks/{id} (poll).
 func tasksRoutes(mux *http.ServeMux) {

@@ -72,6 +72,38 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+func TestPersistence(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/tasks.json"
+
+	m := NewManager(0).WithPersistence(path)
+	m.Submit("blueprint_install", func(ctx context.Context) (string, error) {
+		return "done", nil
+	})
+	// Wait for the task to finish and persist.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		list := m.List()
+		if len(list) == 1 && list[0].Status == StatusSucceeded {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("task did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// New manager on the same file should see the finished task.
+	m2 := NewManager(0).WithPersistence(path)
+	list := m2.List()
+	if len(list) != 1 {
+		t.Fatalf("restored tasks = %d, want 1", len(list))
+	}
+	if list[0].Kind != "blueprint_install" || list[0].Output != "done" {
+		t.Errorf("restored task = %+v", list[0])
+	}
+}
+
 func TestListNewestFirst(t *testing.T) {
 	m := NewManager(0)
 	a := m.Submit("a", func(ctx context.Context) (string, error) { return "", nil })

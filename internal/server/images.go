@@ -8,6 +8,7 @@ import (
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/tasks"
 )
 
 // imageRoutes mounts the Phase 2 image endpoints against the runtime client.
@@ -105,8 +106,8 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 		if req.Image == "" {
 			req.Image = ref
 		}
-		id := taskMgr.Submit("image_pull", func(ctx context.Context) (string, error) {
-			return agent.PullImageOut(ctx, req.Image, req.Platform)
+		id := taskMgr.SubmitLines("image_pull", func(ctx context.Context, onLine tasks.ProgressFunc) (string, error) {
+			return agent.PullImageLines(ctx, req.Image, req.Platform, onLine)
 		})
 		writeJSON(w, http.StatusAccepted, map[string]string{"task_id": id, "action": "pull", "image": req.Image})
 
