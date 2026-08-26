@@ -7,10 +7,11 @@ import (
 	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
-// handleContainerLogs serves container logs. When follow=1 it streams as
-// server-sent events by polling cardinal's (non-streaming) logs endpoint for
-// new lines; otherwise it returns the requested tail as plain text.
-func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string) {
+// handleContainerLogs serves container logs on the given node client. When
+// follow=1 it streams as server-sent events by polling cardinal's
+// (non-streaming) logs endpoint for new lines; otherwise it returns the
+// requested tail as plain text.
+func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string, c *runtime.Client) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
@@ -21,9 +22,9 @@ func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string) {
 
 	// Non-streaming path: return the log tail directly.
 	if !follow {
-		data, err := defaultClient.Logs(r.Context(), id, tail)
+		data, err := c.Logs(r.Context(), id, tail)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "logs %s: %s", id, err.Error())
 			return
 		}
 		w.Header().Set("Content-Type", "text/plain")
@@ -32,8 +33,8 @@ func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	// Streaming path: SSE follow. cardinal's logs endpoint does not stream,
-	// so wings polls it and emits new lines as SSE events.
+	// Streaming path: SSE follow. cardinal's logs endpoint does not stream, so
+	// wings polls it and emits new lines as SSE events.
 	fl, ok := w.(http.Flusher)
 	if !ok {
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
@@ -46,7 +47,7 @@ func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string) {
 	w.WriteHeader(http.StatusOK)
 	fl.Flush()
 
-	ch, errCh := defaultClient.FollowLogs(r.Context(), id)
+	ch, errCh := c.FollowLogs(r.Context(), id)
 	for {
 		select {
 		case <-r.Context().Done():
@@ -71,7 +72,7 @@ func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string) {
 
 // handleContainerExec runs a command in a container via cardinal's exec
 // endpoint, returning the exec id.
-func handleContainerExec(w http.ResponseWriter, r *http.Request, id string) {
+func handleContainerExec(w http.ResponseWriter, r *http.Request, id string, c *runtime.Client) {
 	var req runtime.ExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -81,9 +82,9 @@ func handleContainerExec(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "Cmd required")
 		return
 	}
-	execID, err := defaultClient.Exec(r.Context(), id, &req)
+	execID, err := c.Exec(r.Context(), id, &req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeErr(w, http.StatusInternalServerError, ErrInternal, "exec %s: %s", id, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": execID})

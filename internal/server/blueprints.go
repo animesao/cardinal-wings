@@ -17,9 +17,13 @@ func blueprintRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 	mux.HandleFunc("/v1/blueprints", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			cat, err := defaultClient.BlueprintRegistry(r.Context(), "")
+			c, ok := clientFor(w, r)
+			if !ok {
+				return
+			}
+			cat, err := c.BlueprintRegistry(r.Context(), "")
 			if err != nil {
-				writeError(w, http.StatusBadGateway, err.Error())
+				writeErr(w, http.StatusBadGateway, ErrUpstream, "blueprint registry: %s", err.Error())
 				return
 			}
 			writeJSON(w, http.StatusOK, struct {
@@ -65,20 +69,24 @@ func handleBlueprintRef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cat, err := defaultClient.BlueprintRegistry(r.Context(), "")
+	c, ok := clientFor(w, r)
+	if !ok {
+		return
+	}
+	cat, err := c.BlueprintRegistry(r.Context(), "")
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "blueprint registry: %s", err.Error())
 		return
 	}
 	entry, ok := cat.Blueprints[name]
 	if !ok {
-		writeError(w, http.StatusNotFound, "blueprint not in registry: "+name)
+		writeErr(w, http.StatusNotFound, ErrNotFound, "blueprint not in registry: %s", name)
 		return
 	}
 	tplURL := strings.TrimSuffix(cat.BaseURL, "/") + "/" + entry.File
-	tpl, err := defaultClient.BlueprintTemplate(r.Context(), tplURL)
+	tpl, err := c.BlueprintTemplate(r.Context(), tplURL)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "blueprint template: %s", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {

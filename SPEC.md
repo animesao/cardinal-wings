@@ -71,55 +71,74 @@ over the **Docker-compatible HTTP API** that `cardinal serve` exposes.
   The cluster handles _placement_ via `orchestrator`; wings aggregates and
   exposes the whole cluster to the panel as one tree.
 
-## API surface (proposed)
+## API surface (live)
 
-All endpoints under `/v1`, JSON. Two auth modes per key: `readonly` and `admin`.
+All endpoints under `/v1`, JSON. Two auth modes per key: `readonly` and
+`admin`. **Node routing:** every resource endpoint accepts `?node=<name>` to
+select which cardinal node to talk to (default: the local node). Unknown node
+names return `404 unknown node`.
+
+Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 
 ### System
 | Method | Path | Description |
 |---|---|---|
 | GET | `/v1/ping` | liveness, returns `"pong"` |
 | GET | `/v1/version` | wings version |
+| GET | `/v1/self` | role of the current key (`readonly`/`admin`) for UI gating |
 | GET | `/v1/nodes` | cluster nodes + per-node health |
-| GET | `/v1/system/info` | host summary (containers/images/cpu/mem) |
+| GET | `/v1/system/info` | dashboard aggregate per node: containers running/stopped, images, status |
 
-### Containers (single-host, local node)
-| Method | Path |
-|---|---|
-| GET | `/v1/containers` · `/v1/containers/{id}` |
-| POST | `/v1/containers` (create from image) |
-| POST | `/v1/containers/{id}/start` · `/stop` · `/restart` · `/kill` |
-| POST | `/v1/containers/{id}/rename` · `/update` |
-| DELETE | `/v1/containers/{id}` |
-| GET | `/v1/containers/{id}/stats` |
-| GET | `/v1/containers/{id}/logs?tail=…&follow=1` (SSE/streaming) |
-| POST | `/v1/containers/{id}/exec` (interactive, streamed) |
+### Containers
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/containers` | filters: `?state=running|stopped`, `?image=`, `?search=`, `?all=1` |
+| POST | `/v1/containers` | create from image (admin) |
+| GET | `/v1/containers/{id}` | inspect |
+| POST | `/v1/containers/{id}/start` · `/stop` · `/restart` · `/kill` | admin |
+| DELETE | `/v1/containers/{id}` | `?force=1` (admin) |
+| GET | `/v1/containers/{id}/stats` | Docker stats schema |
+| GET | `/v1/containers/{id}/logs?tail=…&follow=1` | `follow=1` → SSE stream |
+| POST | `/v1/containers/{id}/exec` | runs a command, returns exec id |
 
-### Images (local node)
-| Method | Path |
-|---|---|
-| GET | `/v1/images` · `/v1/images/{ref}` |
-| POST | `/v1/images/pull` · `/v1/images/search?q=` |
-| POST | `/v1/images/{ref}/tag` · `/v1/images/{ref}/push` |
-| DELETE | `/v1/images/{ref}` |
+### Images
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/images` · `/v1/images/{ref}` | list / inspect |
+| POST | `/v1/images/{ref}/pull` | via `cardinal pull` CLI (admin) |
+| POST | `/v1/images/{ref}/tag?repo=&tag=` | admin |
+| POST | `/v1/images/{ref}/push` | admin |
+| DELETE | `/v1/images/{ref}` | admin |
+| GET | `/v1/images/search?q=` | Docker Hub search |
 
 ### Blueprints (from the official registry)
-| Method | Path |
-|---|---|
-| GET | `/v1/blueprints` · `/v1/blueprints/{name}` |
-| POST | `/v1/blueprints/{name}/install` (returns a task id) |
-| POST | `/v1/blueprints/{name}/uninstall` |
-| GET | `/v1/tasks` · `/v1/tasks/{id}` (async job status) |
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/blueprints` · `/v1/blueprints/{name}` | catalog / detail + template |
+| POST | `/v1/blueprints/{name}/install` | via `cardinal blueprint install` (admin) |
+| POST | `/v1/blueprints/{name}/uninstall` | admin |
 
-### Cluster services & functions
-| Method | Path |
-|---|---|
-| GET | `/v1/services` · `/v1/services/{name}` |
-| POST | `/v1/services` (create) · `/v1/services/{name}/scale` · `/update` |
-| DELETE | `/v1/services/{name}` |
-| GET | `/v1/functions` · `/v1/functions/{name}` |
-| POST | `/v1/functions` (deploy) · `/v1/functions/{name}/invoke` |
-| DELETE | `/v1/functions/{name}` |
+### Cluster
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/cluster/health` | this node's cluster health |
+| GET | `/v1/cluster/replicas` | replica list |
+| GET | `/v1/cluster/containers` | containers across the cluster view |
+
+### Services & functions (delegated to `cardinal service` / `cardinal fn` CLI)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/services` | list (raw CLI output) |
+| POST | `/v1/services` | create `{name, image, replicas?, ports?, env?}` (admin) |
+| POST | `/v1/services/{name}/scale` | `{replicas}` (admin) |
+| DELETE | `/v1/services/{name}` | remove (admin) |
+| GET | `/v1/functions` | list (raw CLI output) |
+| POST | `/v1/functions` | deploy `{name, image}` (admin) |
+| POST | `/v1/functions/{name}` · `/v1/functions/{name}/invoke` | call `{data?}` (admin) |
+| DELETE | `/v1/functions/{name}` | remove (admin) |
+
+### Not yet exposed (future)
+- `/v1/tasks` — async job status for long-running installs.
 
 ## Security model
 
@@ -150,7 +169,8 @@ All endpoints under `/v1`, JSON. Two auth modes per key: `readonly` and `admin`.
    ✅ Done for SSE logs + exec proxy.
 6. **Phase 5 — cluster facade.** `/v1/nodes`, `/v1/cluster/health`, `/v1/cluster/
    replicas`, `/v1/cluster/containers`; cross-node routing via each node's
-   `cardinal serve`. ✅ Basic `/v1/nodes` + cluster views done.
+   `cardinal serve`. ✅ Done: node registry + `?node=` routing on every
+   resource endpoint, health per node, `/v1/system/info` dashboard aggregate.
 7. **Phase 6 — panel + site.** `cardinal-panel` web UI (separate repo); promote
    the `/wings/` site page to real docs; update the news post. ✅ Site page and
    news updated for the skeleton; the panel remains a separate project.
@@ -170,7 +190,9 @@ cardinal-wings/
 ├── internal/
 │   ├── config/       # TOML config: keys, roles, bind, TLS, remote nodes
 │   ├── auth/         # constant-time bearer check + role lookup
-│   └── server/       # http router, middleware, handlers
+│   ├── agent/        # spawn local cardinal serve; remote node clients
+│   ├── runtime/      # HTTP client to cardinal serve (Docker schema, blueprints, cluster)
+│   └── server/       # http router, middleware, handlers, node registry
 ├── systemd/cardinal-wings.service
 ├── install.sh
 ├── Makefile

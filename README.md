@@ -52,10 +52,17 @@ cardinal-wings/
 └── Makefile
 ```
 
-Live v1 endpoints so far: `/v1/ping`, `/v1/version`, `/v1/containers` (list/
-create/inspect/start/stop/restart/kill/remove/stats/logs/exec), `/v1/images`
+Live v1 endpoints so far: `/v1/ping`, `/v1/version`, `/v1/self` (current
+key's role), `/v1/system/info` (dashboard aggregate), `/v1/containers`
+(list with `?state=`/`?image=`/`?search=` filters, create, inspect, start/
+stop/restart/kill, remove, stats, logs with SSE `follow`, exec), `/v1/images`
 (list/inspect/remove/pull/search/tag/push), `/v1/blueprints` (list/inspect/
-install/uninstall) and `/v1/nodes` + `/v1/cluster/*`.
+install/uninstall), `/v1/services` (list/create/scale/remove),
+`/v1/functions` (list/deploy/invoke/remove) and `/v1/nodes` + `/v1/cluster/*`.
+
+Every resource endpoint accepts `?node=<name>` to route to a specific
+cluster node (default: local). Errors are uniform:
+`{"error":{"code":"…","message":"…"}}`.
 
 ## Build & run (development)
 

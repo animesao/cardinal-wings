@@ -3,24 +3,30 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/animesao/cardinal-wings/internal/auth"
 	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
-// containerRoutes mounts the Phase 1 container endpoints against the runtime
-// client for the local node.
+// containerRoutes mounts the container endpoints. Every handler routes to the
+// node named by `?node=` (default: the local node).
 func containerRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 	mux.HandleFunc("/v1/containers", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			list, err := defaultClient.ListContainers(r.Context(), r.URL.Query().Get("all") == "1")
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
+			c, ok := clientFor(w, r)
+			if !ok {
 				return
 			}
-			writeJSON(w, http.StatusOK, list)
+			list, err := c.ListContainers(r.Context(), r.URL.Query().Get("all") == "1")
+			if err != nil {
+				writeErr(w, http.StatusBadGateway, ErrUpstream, "list containers: %s", err.Error())
+				return
+			}
+			filtered := filterContainers(list, r.URL.Query())
+			writeJSON(w, http.StatusOK, map[string]interface{}{"containers": filtered})
 		case http.MethodPost:
 			mw.AdminOnly(http.HandlerFunc(handleContainerCreate)).ServeHTTP(w, r)
 		default:
@@ -35,6 +41,40 @@ func containerRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 		}
 		handleContainerRef(w, r)
 	})
+}
+
+// filterContainers applies panel-friendly filters: ?state=running|stopped,
+// ?image=<substring>, ?search=<name-or-image substring>.
+func filterContainers(list []runtime.Summary, q url.Values) []runtime.Summary {
+	state := q.Get("state")
+	image := q.Get("image")
+	search := q.Get("search")
+	if state == "" && image == "" && search == "" {
+		return list
+	}
+	out := make([]runtime.Summary, 0, len(list))
+	for _, s := range list {
+		if state != "" {
+			running := isRunningStatus(s.Status)
+			if state == "running" && !running {
+				continue
+			}
+			if state == "stopped" && running {
+				continue
+			}
+		}
+		if image != "" && !strings.Contains(strings.ToLower(s.Image), strings.ToLower(image)) {
+			continue
+		}
+		if search != "" {
+			hay := strings.ToLower(s.Name + " " + s.Image)
+			if !strings.Contains(hay, strings.ToLower(search)) {
+				continue
+			}
+		}
+		out = append(out, s)
+	}
+	return out
 }
 
 // splitRef returns the container id and trailing action from a ref path.
@@ -60,20 +100,28 @@ func isMutating(action, method string) bool {
 }
 
 func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
+	c, ok := clientFor(w, r)
+	if !ok {
+		return
+	}
 	var req runtime.CreateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	res, err := defaultClient.Create(r.Context(), &req)
+	res, err := c.Create(r.Context(), &req)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeErr(w, http.StatusBadRequest, ErrBadRequest, "create: %s", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusCreated, res)
 }
 
 func handleContainerRef(w http.ResponseWriter, r *http.Request) {
+	c, ok := clientFor(w, r)
+	if !ok {
+		return
+	}
 	ref, action := splitRef(r.URL.Path)
 	if ref == "" {
 		writeError(w, http.StatusNotFound, "missing container id")
@@ -82,38 +130,38 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	switch {
 	case action == "" && r.Method == http.MethodGet:
-		d, err := defaultClient.Inspect(r.Context(), ref)
+		d, err := c.Inspect(r.Context(), ref)
 		if err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
+			writeErr(w, http.StatusNotFound, ErrNotFound, "inspect %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, d)
 
 	case action == "stats" && r.Method == http.MethodGet:
 		var s interface{}
-		if err := defaultClient.Stats(r.Context(), ref, &s); err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
+		if err := c.Stats(r.Context(), ref, &s); err != nil {
+			writeErr(w, http.StatusNotFound, ErrNotFound, "stats %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, s)
 
 	case action == "logs" && r.Method == http.MethodGet:
-		handleContainerLogs(w, r, ref)
+		handleContainerLogs(w, r, ref, c)
 
 	case action == "exec" && r.Method == http.MethodPost:
-		handleContainerExec(w, r, ref)
+		handleContainerExec(w, r, ref, c)
 
 	case (action == "start" || action == "stop" || action == "restart" || action == "kill") && r.Method == http.MethodPost:
-		if err := defaultClient.Action(r.Context(), ref, action); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if err := c.Action(r.Context(), ref, action); err != nil {
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "%s %s: %s", action, ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"id": ref, "action": action, "ok": "true"})
 
 	case action == "" && r.Method == http.MethodDelete:
 		force := r.URL.Query().Get("force") == "1"
-		if err := defaultClient.Remove(r.Context(), ref, force); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if err := c.Remove(r.Context(), ref, force); err != nil {
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "remove %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"removed": ref})
@@ -121,8 +169,4 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 	}
-}
-
-func writeError(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
 }

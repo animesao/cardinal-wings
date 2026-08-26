@@ -2,25 +2,34 @@ package server
 
 import (
 	"net/http"
-	"sync"
-
-	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
-// clusterRoutes mounts the Phase 5 cluster node endpoints. These aggregate
-// the local node and any configured remote cluster nodes.
+// clusterRoutes mounts the cluster node endpoints. These aggregate the local
+// node and any configured remote cluster nodes; an optional `?node=<name>`
+// selects a specific node for the underlying cardinal calls.
 func clusterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/v1/nodes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		var nodes []runtime.NodeInfo
-		if defaultClient != nil {
-			nodes = append(nodes, runtime.NodeInfo{Name: "local", URL: defaultClient.Base(), Status: "up"})
-		}
-		for _, n := range remoteNodesSnapshot() {
-			nodes = append(nodes, n)
+		names := registry.names()
+		nodes := make([]map[string]interface{}, 0, len(names))
+		for _, name := range names {
+			c := registry.byName(name)
+			if c == nil {
+				continue
+			}
+			status := "configured"
+			if h, err := c.Health(r.Context()); err == nil && h != "" {
+				status = h
+			}
+			nodes = append(nodes, map[string]interface{}{
+				"name":   name,
+				"url":    c.Base(),
+				"status": status,
+				"local":  name == "local",
+			})
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"nodes": nodes})
 	})
@@ -30,9 +39,13 @@ func clusterRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		status, err := defaultClient.Health(r.Context())
+		c, ok := clientFor(w, r)
+		if !ok {
+			return
+		}
+		status, err := c.Health(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeErr(w, http.StatusBadGateway, ErrUpstream, "node health: %s", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": status})
@@ -44,12 +57,16 @@ func clusterRoutes(mux *http.ServeMux) {
 			return
 		}
 		if r.Method == http.MethodPost {
-			writeError(w, http.StatusNotImplemented, "replica create via panel not yet wired — use service commands")
+			writeErr(w, http.StatusNotImplemented, ErrNotImplemented, "replica create via panel not yet wired — use service commands")
 			return
 		}
-		replicas, err := defaultClient.Replicas(r.Context())
+		c, ok := clientFor(w, r)
+		if !ok {
+			return
+		}
+		replicas, err := c.Replicas(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeErr(w, http.StatusBadGateway, ErrUpstream, "replicas: %s", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"replicas": replicas})
@@ -60,29 +77,15 @@ func clusterRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		containers, err := defaultClient.ContainersOnNode(r.Context())
+		c, ok := clientFor(w, r)
+		if !ok {
+			return
+		}
+		containers, err := c.ContainersOnNode(r.Context())
 		if err != nil {
-			writeError(w, http.StatusBadGateway, err.Error())
+			writeErr(w, http.StatusBadGateway, ErrUpstream, "cluster containers: %s", err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"containers": containers})
 	})
-}
-
-// remoteNodesMu guards remoteNodesSnapshot.
-var remoteNodesMu sync.RWMutex
-var remoteNodes = []runtime.NodeInfo{}
-
-func setRemoteNodes(nodes []runtime.NodeInfo) {
-	remoteNodesMu.Lock()
-	defer remoteNodesMu.Unlock()
-	remoteNodes = nodes
-}
-
-func remoteNodesSnapshot() []runtime.NodeInfo {
-	remoteNodesMu.RLock()
-	defer remoteNodesMu.RUnlock()
-	out := make([]runtime.NodeInfo, len(remoteNodes))
-	copy(out, remoteNodes)
-	return out
 }

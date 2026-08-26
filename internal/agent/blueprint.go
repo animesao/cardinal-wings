@@ -32,14 +32,26 @@ func BlueprintUninstall(ctx context.Context, name string) error {
 	return runCardinal(ctx, "blueprint", "uninstall", name)
 }
 
+// buildCardinalCmd builds an exec.Cmd for the cardinal CLI with the given args.
+func buildCardinalCmd(ctx context.Context, args ...string) *exec.Cmd {
+	return exec.CommandContext(ctx, "cardinal", args...)
+}
+
+// runCardinal runs cardinal, returning an error that includes output.
 func runCardinal(ctx context.Context, args ...string) error {
-	cmd := exec.CommandContext(ctx, "cardinal", args...)
+	_, err := runCardinalOut(ctx, args...)
+	return err
+}
+
+// runCardinalOut runs cardinal and returns trimmed stdout on success.
+func runCardinalOut(ctx context.Context, args ...string) (string, error) {
+	cmd := buildCardinalCmd(ctx, args...)
 	var stderr, stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		out := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
-		return fmt.Errorf("cardinal %s: %v: %s", strings.Join(args, " "), err, out)
+		return "", fmt.Errorf("cardinal %s: %v: %s", strings.Join(args, " "), err, out)
 	}
-	return nil
+	return strings.TrimSpace(stdout.String()), nil
 }

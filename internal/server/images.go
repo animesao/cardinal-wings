@@ -17,12 +17,16 @@ func imageRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 	mux.HandleFunc("/v1/images", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			list, err := defaultClient.Images(r.Context())
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
+			c, ok := clientFor(w, r)
+			if !ok {
 				return
 			}
-			writeJSON(w, http.StatusOK, list)
+			list, err := c.Images(r.Context())
+			if err != nil {
+				writeErr(w, http.StatusBadGateway, ErrUpstream, "list images: %s", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]interface{}{"images": list})
 		case http.MethodDelete:
 			// Delete-all is disallowed by design.
 			writeError(w, http.StatusBadRequest, "ref required")
@@ -70,18 +74,23 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	c, ok := clientFor(w, r)
+	if !ok {
+		return
+	}
+
 	switch {
 	case action == "" && r.Method == http.MethodGet:
 		var out interface{}
-		if err := defaultClient.InspectImage(r.Context(), ref, &out); err != nil {
-			writeError(w, http.StatusNotFound, err.Error())
+		if err := c.InspectImage(r.Context(), ref, &out); err != nil {
+			writeErr(w, http.StatusNotFound, ErrNotFound, "inspect image %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, out)
 
 	case action == "" && r.Method == http.MethodDelete:
-		if err := defaultClient.RemoveImage(r.Context(), ref); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if err := c.RemoveImage(r.Context(), ref); err != nil {
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "remove image %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"removed": ref})
@@ -99,7 +108,7 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 			req.Image = ref
 		}
 		if err := PullImage(r.Context(), req.Image, req.Platform); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "pull %s: %s", req.Image, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"pulled": req.Image})
@@ -110,8 +119,8 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "repo query param required")
 			return
 		}
-		if err := defaultClient.TagImage(r.Context(), ref, repo, r.URL.Query().Get("tag")); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if err := c.TagImage(r.Context(), ref, repo, r.URL.Query().Get("tag")); err != nil {
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "tag %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"tagged": repo, "from": ref})
@@ -119,8 +128,8 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 	case action == "push" && r.Method == http.MethodPost:
 		user := r.URL.Query().Get("username")
 		pass := r.URL.Query().Get("password")
-		if err := defaultClient.PushImage(r.Context(), ref, user, pass); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+		if err := c.PushImage(r.Context(), ref, user, pass); err != nil {
+			writeErr(w, http.StatusInternalServerError, ErrInternal, "push %s: %s", ref, err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"pushed": ref})

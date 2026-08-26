@@ -40,26 +40,29 @@ func Run(cfg *config.Config) error {
 	defer local.Stop()
 	defaultClient = local.Client()
 
+	// Populate the node registry: local node first, then every enabled remote
+	// node, so handlers can route with `?node=<name>`.
+	entries := []nodeEntry{{name: "local", client: local.Client(), local: true}}
+	for _, n := range agent.RemoteClients(cfg) {
+		entries = append(entries, nodeEntry{name: n.Name, client: n.Client})
+	}
+	registerNodes(entries)
+
 	mw := auth.New(cfg)
 	mux := http.NewServeMux()
 
 	// --- v1 system endpoints (always available) ---
 	mux.HandleFunc("/v1/ping", handlePing)
 	mux.HandleFunc("/v1/version", handleVersion)
+	mux.HandleFunc("/v1/system/info", handleSystemInfo)
+	mux.HandleFunc("/v1/self", handleSelf)
 
 	// --- resource endpoints (behind auth) ---
 	containerRoutes(mux, mw)
 	imageRoutes(mux, mw)
 	blueprintRoutes(mux, mw)
+	servicesRoutes(mux, mw)
 	clusterRoutes(mux)
-
-	// Aggregate configured remote cluster nodes into /v1/nodes.
-	remotes := agent.RemoteClients(cfg)
-	infos := make([]runtime.NodeInfo, 0, len(remotes))
-	for _, n := range remotes {
-		infos = append(infos, runtime.NodeInfo{Name: n.Name, URL: n.Client.Base(), Status: "configured"})
-	}
-	setRemoteNodes(infos)
 
 	// The authenticated chain: rate limit -> CORS -> bearer auth.
 	var handler http.Handler = mux
