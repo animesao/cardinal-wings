@@ -14,12 +14,18 @@ import (
 // auditLog appends one JSONL line per mutating request (POST/DELETE). It is
 // how an operator answers "who changed what, when".
 type auditLog struct {
-	mu   sync.Mutex
-	path string
-	f    *os.File
+	mu      sync.Mutex
+	path    string
+	f       *os.File
+	size    int64
+	maxSize int64
 }
 
-var audit = &auditLog{}
+// auditMaxSize is the rotation threshold: at 10 MiB the log is rotated to
+// <path>.1 and a fresh file is started.
+const auditMaxSize = 10 << 20
+
+var audit = &auditLog{maxSize: auditMaxSize}
 
 // initAudit opens (or creates) the audit file. Disabled when path is empty.
 func initAudit(path string) {
@@ -37,6 +43,24 @@ func initAudit(path string) {
 	}
 	audit.path = path
 	audit.f = f
+	if fi, err := f.Stat(); err == nil {
+		audit.size = fi.Size()
+	}
+}
+
+// maybeRotateLocked rotates the log when it exceeds maxSize.
+func (a *auditLog) maybeRotateLocked() {
+	if a.f == nil || a.maxSize <= 0 || a.size < a.maxSize {
+		return
+	}
+	_ = a.f.Close()
+	_ = os.Rename(a.path, a.path+".1")
+	f, err := os.OpenFile(a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		return
+	}
+	a.f = f
+	a.size = 0
 }
 
 // record writes one audit entry.
@@ -55,7 +79,9 @@ func (a *auditLog) record(keyName, method, path, remote, role string) {
 		"remote": remote,
 	}
 	data, _ := json.Marshal(entry)
-	_, _ = a.f.Write(append(data, '\n'))
+	n, _ := a.f.Write(append(data, '\n'))
+	a.size += int64(n)
+	a.maybeRotateLocked()
 }
 
 // auditMiddleware wraps the authenticated mux and records mutating requests.

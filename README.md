@@ -79,13 +79,29 @@ curl -s localhost:8080/v1/ping   # pong
 
 ## Security
 
-- Bearer auth with per-key roles (`readonly`/`admin`) and **per-key rate
-  limiting**.
+- Bearer auth with per-key roles (`readonly`/`admin`) and **per-key + per-IP
+  rate limiting** (configurable in `[rate_limit]`).
 - Admin mutations are written to an **audit log** (`wings-audit.jsonl`, set
-  `WINGS_DATA_DIR` to relocate).
+  `WINGS_DATA_DIR` to relocate; rotated at 10 MiB).
 - TLS supported in the config; `WINGS_TLS=1` in install.sh generates a
-  self-signed cert and wires it up.
+  self-signed cert and wires it up. Server timeouts are configurable.
 - Loopback-only by default; external binds require keys + TLS.
+- **Webhooks** (`[[webhooks]]` in config) deliver `task.completed` and
+  container events to panel URLs with an optional shared secret.
+
+## Operations
+
+- `GET /healthz` (unauthenticated): 200 when the local cardinal node is up,
+  503 in degraded mode (cardinal missing). wings still starts without
+  cardinal — nodes just show as down.
+- Live terminal: `POST /v1/containers/{id}/terminal`, input via
+  `/terminal/input`, output via `/terminal/stream` (SSE) or `/terminal/ws`
+  (websocket).
+- Live stats: `/v1/containers/{id}/stats?stream=1&interval=2s` (SSE).
+- Filesystem: `/v1/containers/{id}/fs/ls|cat|tree?path=` and
+  `POST /v1/containers/{id}/cp {src, dst}`.
+- Multi-node metrics in `/v1/metrics` (per-node labels).
+- Cluster deployment guide: [docs/cluster.md](docs/cluster.md).
 
 ## Releases & CI (GitHub Actions)
 

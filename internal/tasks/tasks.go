@@ -38,11 +38,20 @@ type Task struct {
 
 // Manager runs and tracks async tasks.
 type Manager struct {
-	mu    sync.Mutex
-	tasks map[string]*Task
-	seq   uint64
-	ttl   time.Duration
-	path  string // optional JSON persistence file
+	mu         sync.Mutex
+	tasks      map[string]*Task
+	seq        uint64
+	ttl        time.Duration
+	path       string // optional JSON persistence file
+	onComplete func(Task)
+}
+
+// OnComplete registers a callback invoked (with a copy) when any task
+// finishes. Used by wings to fire webhooks and notify panels.
+func (m *Manager) OnComplete(fn func(Task)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onComplete = fn
 }
 
 // NewManager builds a task manager; ttl controls how long finished tasks are
@@ -148,7 +157,12 @@ func (m *Manager) submit(kind string, fnLines func(ctx context.Context, onLine P
 			t.Output = out
 		}
 		m.saveLocked()
+		complete := *t
+		cb := m.onComplete
 		m.mu.Unlock()
+		if cb != nil {
+			cb(complete)
+		}
 	}()
 
 	return id

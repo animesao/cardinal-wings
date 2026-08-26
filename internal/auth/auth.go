@@ -29,12 +29,13 @@ type Middleware struct {
 	keys    map[string]*bucket
 }
 
+// Defaults applied when the config leaves a value at zero.
 const (
-	rateTPS    = 25.0
-	burst      = 50
-	keyRateTPS = 10.0
-	keyBurst   = 30
-	maxClients = 4096
+	defaultRateTPS    = 25.0
+	defaultBurst      = 50
+	defaultKeyRateTPS = 10.0
+	defaultKeyBurst   = 30
+	defaultMaxClients = 4096
 )
 
 type bucket struct {
@@ -94,13 +95,13 @@ func (m *Middleware) RateLimit(next http.Handler) http.Handler {
 		m.mu.Lock()
 		b, ok := m.clients[host]
 		if !ok {
-			if len(m.clients) >= maxClients {
+			if len(m.clients) >= m.maxClients() {
 				m.pruneLocked(10 * time.Minute)
 			}
-			b = &bucket{tokens: burst, last: time.Now()}
+			b = &bucket{tokens: float64(m.burst()), last: time.Now()}
 			m.clients[host] = b
 		}
-		if !takeLocked(b) {
+		if !takeLocked(b, m.rateTPS(), m.burst()) {
 			m.mu.Unlock()
 			writeError(w, http.StatusTooManyRequests, "rate limit exceeded")
 			return
@@ -128,25 +129,17 @@ func (m *Middleware) RateLimitKey(next http.Handler) http.Handler {
 		m.mu.Lock()
 		b, ok := m.keys[id]
 		if !ok {
-			if len(m.keys) >= maxClients {
+			if len(m.keys) >= m.maxClients() {
 				m.pruneKeysLocked(10 * time.Minute)
 			}
-			b = &bucket{tokens: keyBurst, last: time.Now()}
+			b = &bucket{tokens: float64(m.keyBurst()), last: time.Now()}
 			m.keys[id] = b
 		}
-		// Per-key bucket refills at its own rate.
-		now := time.Now()
-		b.tokens += now.Sub(b.last).Seconds() * keyRateTPS
-		if b.tokens > keyBurst {
-			b.tokens = keyBurst
-		}
-		b.last = now
-		if b.tokens < 1 {
+		if !takeLocked(b, m.keyRateTPS(), m.keyBurst()) {
 			m.mu.Unlock()
 			writeError(w, http.StatusTooManyRequests, "key rate limit exceeded")
 			return
 		}
-		b.tokens--
 		m.mu.Unlock()
 		next.ServeHTTP(w, r)
 	})
@@ -171,11 +164,11 @@ func (m *Middleware) pruneLocked(maxAge time.Duration) {
 }
 
 // takeLocked refills and consumes one token from a bucket.
-func takeLocked(b *bucket) bool {
+func takeLocked(b *bucket, tps float64, burst int) bool {
 	now := time.Now()
-	b.tokens += now.Sub(b.last).Seconds() * rateTPS
-	if b.tokens > burst {
-		b.tokens = burst
+	b.tokens += now.Sub(b.last).Seconds() * tps
+	if b.tokens > float64(burst) {
+		b.tokens = float64(burst)
 	}
 	b.last = now
 	if b.tokens < 1 {
@@ -183,6 +176,41 @@ func takeLocked(b *bucket) bool {
 	}
 	b.tokens--
 	return true
+}
+
+func (m *Middleware) rateTPS() float64 {
+	if m.cfg.RateLimit.IPTPS > 0 {
+		return m.cfg.RateLimit.IPTPS
+	}
+	return defaultRateTPS
+}
+
+func (m *Middleware) burst() int {
+	if m.cfg.RateLimit.IPBurst > 0 {
+		return m.cfg.RateLimit.IPBurst
+	}
+	return defaultBurst
+}
+
+func (m *Middleware) keyRateTPS() float64 {
+	if m.cfg.RateLimit.KeyTPS > 0 {
+		return m.cfg.RateLimit.KeyTPS
+	}
+	return defaultKeyRateTPS
+}
+
+func (m *Middleware) keyBurst() int {
+	if m.cfg.RateLimit.KeyBurst > 0 {
+		return m.cfg.RateLimit.KeyBurst
+	}
+	return defaultKeyBurst
+}
+
+func (m *Middleware) maxClients() int {
+	if m.cfg.RateLimit.MaxClients > 0 {
+		return m.cfg.RateLimit.MaxClients
+	}
+	return defaultMaxClients
 }
 
 // CORS restricts browser cross-origin access to loopback unless extra origins

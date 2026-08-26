@@ -156,7 +156,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp":
 		return true
 	}
 	return action == "" && method == http.MethodDelete
@@ -201,6 +201,10 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, d)
 
 	case action == "stats" && r.Method == http.MethodGet:
+		if r.URL.Query().Get("stream") == "1" {
+			handleContainerStatsStream(w, r, ref, c)
+			return
+		}
 		var s interface{}
 		if err := c.Stats(r.Context(), ref, &s); err != nil {
 			writeErr(w, http.StatusNotFound, ErrNotFound, "stats %s: %s", ref, err.Error())
@@ -225,6 +229,15 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "terminal/stream" && r.Method == http.MethodGet:
 		handleTerminalStream(w, r)
+
+	case action == "terminal/ws" && r.Method == http.MethodGet:
+		handleTerminalWS(w, r)
+
+	case strings.HasPrefix(action, "fs/") && r.Method == http.MethodGet:
+		handleFs(w, r)
+
+	case action == "cp" && r.Method == http.MethodPost:
+		handleCp(w, r)
 
 	case (action == "start" || action == "stop" || action == "restart" || action == "kill") && r.Method == http.MethodPost:
 		if err := c.Action(r.Context(), ref, action); err != nil {

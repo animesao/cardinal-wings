@@ -7,16 +7,17 @@ import (
 	"github.com/animesao/cardinal-wings/internal/auth"
 ) // nodeSummary is the per-node block returned by /v1/system/info.
 type nodeSummary struct {
-	Name         string `json:"name"`
-	Status       string `json:"status"`
-	Running      int    `json:"running"`
-	Stopped      int    `json:"stopped"`
-	Total        int    `json:"total"`
-	Images       int    `json:"images"`
-	NCPU         int    `json:"ncpu,omitempty"`
-	MemTotal     int64  `json:"mem_total_bytes,omitempty"`
-	Architecture string `json:"architecture,omitempty"`
-	Hostname     string `json:"hostname,omitempty"`
+	Name            string `json:"name"`
+	Status          string `json:"status"`
+	Running         int    `json:"running"`
+	Stopped         int    `json:"stopped"`
+	Total           int    `json:"total"`
+	Images          int    `json:"images"`
+	NCPU            int    `json:"ncpu,omitempty"`
+	MemTotal        int64  `json:"mem_total_bytes,omitempty"`
+	Architecture    string `json:"architecture,omitempty"`
+	Hostname        string `json:"hostname,omitempty"`
+	CardinalVersion string `json:"cardinal_version,omitempty"`
 }
 
 // handleSystemInfo returns a cluster-wide dashboard aggregate: one summary per
@@ -83,6 +84,10 @@ func summarizeNode(r *http.Request, name string) nodeSummary {
 		ns.MemTotal = info.MemTotal
 		ns.Architecture = info.Architecture
 		ns.Hostname = info.Name
+	}
+	// Cardinal version so the panel can warn on incompatibility.
+	if v, err := c.CardinalVersion(r.Context()); err == nil {
+		ns.CardinalVersion = v
 	}
 
 	return ns

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/animesao/cardinal-wings/internal/ws"
 )
 
 // terminalSession is one interactive exec (e.g. /bin/sh) in a container.
@@ -231,6 +232,62 @@ func handleTerminalStream(w http.ResponseWriter, r *http.Request) {
 		case <-heartbeat.C:
 			_, _ = w.Write([]byte(": ping\n\n"))
 			fl.Flush()
+		}
+	}
+}
+
+// handleTerminalWS bridges a websocket to an interactive session: text
+// messages from the browser become stdin, session output is sent back as
+// text frames. This is the terminal path a real panel UI would use.
+func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id := terminalID(r)
+	if id == "" {
+		writeError(w, http.StatusNotFound, "missing container id")
+		return
+	}
+	conn, err := ws.Upgrade(w, r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, ErrBadRequest, "websocket upgrade: %s", err.Error())
+		return
+	}
+	defer conn.Close()
+
+	sess, err := terminals.open(r.Context(), id)
+	if err != nil {
+		_ = conn.WriteText([]byte("\r\nterminal error: " + err.Error() + "\r\n"))
+		return
+	}
+	defer sess.close()
+	defer terminals.remove(id)
+
+	// Session output -> websocket.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ch, unsubscribe := sess.subscribe()
+		defer unsubscribe()
+		for line := range ch {
+			if line == "__session_ended__" {
+				return
+			}
+			if err := conn.WriteText([]byte(line + "\r\n")); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Websocket input -> session stdin.
+	for {
+		msg, err := conn.ReadText()
+		if err != nil {
+			return
+		}
+		if err := sess.writeInput(string(msg)); err != nil {
+			return
 		}
 	}
 }

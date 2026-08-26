@@ -14,6 +14,23 @@ func handlePing(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte("pong\n"))
 }
 
+// handleHealthz is the unauthenticated readiness endpoint: 200 when the local
+// cardinal node is up, 503 when wings runs without it (degraded).
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
+		return
+	}
+	status := "ok"
+	code := http.StatusOK
+	snapshot := checker.snapshot()
+	if st, ok := snapshot["local"]; ok && st.status != "up" {
+		status = "degraded"
+		code = http.StatusServiceUnavailable
+	}
+	writeJSON(w, code, map[string]interface{}{"status": status})
+}
+
 func handleVersion(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})

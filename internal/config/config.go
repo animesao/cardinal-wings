@@ -36,12 +36,24 @@ type Node struct {
 	Enabled bool   `toml:"enabled"`
 }
 
-// Server holds the HTTP bind and TLS settings.
+// Server holds the HTTP bind, TLS and timeout settings.
 type Server struct {
-	Host    string `toml:"host"`
-	Port    int    `toml:"port"`
-	TLSCert string `toml:"tls_cert"`
-	TLSKey  string `toml:"tls_key"`
+	Host         string `toml:"host"`
+	Port         int    `toml:"port"`
+	TLSCert      string `toml:"tls_cert"`
+	TLSKey       string `toml:"tls_key"`
+	ReadTimeout  int    `toml:"read_timeout_seconds"`
+	WriteTimeout int    `toml:"write_timeout_seconds"`
+	IdleTimeout  int    `toml:"idle_timeout_seconds"`
+}
+
+// RateLimit holds the per-IP and per-key token bucket settings.
+type RateLimit struct {
+	IPTPS      float64 `toml:"ip_tps"`
+	IPBurst    int     `toml:"ip_burst"`
+	KeyTPS     float64 `toml:"key_tps"`
+	KeyBurst   int     `toml:"key_burst"`
+	MaxClients int     `toml:"max_clients"`
 }
 
 // Remote holds optional metrics settings.
@@ -49,12 +61,22 @@ type Remote struct {
 	MetricsRequiresAuth bool `toml:"metrics_requires_auth"`
 }
 
-// Config is the root of the wings configuration.
+// Webhook is a URL that receives POST notifications for events (task
+// completion, container events). Secret (if set) is sent as X-Webhook-Secret.
+type Webhook struct {
+	Name    string   `toml:"name"`
+	URL     string   `toml:"url"`
+	Events  []string `toml:"events"` // task.completed, container.event, *
+	Secret  string   `toml:"secret"`
+	Enabled bool     `toml:"enabled"`
+} // Config is the root of the wings configuration.
 type Config struct {
-	Server Server   `toml:"server"`
-	Keys   []APIKey `toml:"keys"`
-	Nodes  []Node   `toml:"nodes"`
-	Remote Remote   `toml:"remote"`
+	Server    Server    `toml:"server"`
+	Keys      []APIKey  `toml:"keys"`
+	Nodes     []Node    `toml:"nodes"`
+	Remote    Remote    `toml:"remote"`
+	RateLimit RateLimit `toml:"rate_limit"`
+	Webhooks  []Webhook `toml:"webhooks"`
 }
 
 // Default returns a config that refuses to serve anything useful until edited.
@@ -64,6 +86,9 @@ func Default() *Config {
 		Keys:   []APIKey{},
 		Nodes:  []Node{},
 		Remote: Remote{MetricsRequiresAuth: true},
+		RateLimit: RateLimit{
+			IPTPS: 25, IPBurst: 50, KeyTPS: 10, KeyBurst: 30, MaxClients: 4096,
+		},
 	}
 }
 
@@ -110,6 +135,41 @@ func Load(path string) (*Config, error) {
 				cfg.Server.TLSCert = unquote(value)
 			case "tls_key":
 				cfg.Server.TLSKey = unquote(value)
+			case "read_timeout_seconds":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.Server.ReadTimeout = v
+				}
+			case "write_timeout_seconds":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.Server.WriteTimeout = v
+				}
+			case "idle_timeout_seconds":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.Server.IdleTimeout = v
+				}
+			}
+		case "rate_limit":
+			switch key {
+			case "ip_tps":
+				if v, err := strconv.ParseFloat(value, 64); err == nil {
+					cfg.RateLimit.IPTPS = v
+				}
+			case "ip_burst":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.RateLimit.IPBurst = v
+				}
+			case "key_tps":
+				if v, err := strconv.ParseFloat(value, 64); err == nil {
+					cfg.RateLimit.KeyTPS = v
+				}
+			case "key_burst":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.RateLimit.KeyBurst = v
+				}
+			case "max_clients":
+				if v, err := strconv.Atoi(value); err == nil {
+					cfg.RateLimit.MaxClients = v
+				}
 			}
 		case "keys":
 			cfg.consumeKey(key, value)
@@ -119,6 +179,8 @@ func Load(path string) (*Config, error) {
 			if key == "metrics_requires_auth" {
 				cfg.Remote.MetricsRequiresAuth = value == "true"
 			}
+		case "webhooks":
+			cfg.consumeWebhook(key, value)
 		}
 	}
 	if err := scan.Err(); err != nil {
@@ -161,6 +223,34 @@ func (c *Config) consumeKey(key, value string) {
 			last.Key = unquote(value)
 		case "role":
 			last.Role = Role(unquote(value))
+		}
+	}
+}
+
+// consumeWebhook accumulates [[webhooks]] entries: url starts a new entry,
+// name/events/secret/enabled fill the last one. Events may be comma-separated.
+func (c *Config) consumeWebhook(key, value string) {
+	switch key {
+	case "url":
+		c.Webhooks = append(c.Webhooks, Webhook{URL: unquote(value)})
+	default:
+		if len(c.Webhooks) == 0 {
+			return
+		}
+		last := &c.Webhooks[len(c.Webhooks)-1]
+		switch key {
+		case "name":
+			last.Name = unquote(value)
+		case "events":
+			for _, e := range strings.Split(unquote(value), ",") {
+				if e = strings.TrimSpace(e); e != "" {
+					last.Events = append(last.Events, e)
+				}
+			}
+		case "secret":
+			last.Secret = unquote(value)
+		case "enabled":
+			last.Enabled = value == "true"
 		}
 	}
 }
@@ -259,6 +349,17 @@ host = "127.0.0.1"     # loopback by default; external binds need keys + TLS
 port = 8080
 # tls_cert = "/etc/cardinal-wings/server.crt"
 # tls_key  = "/etc/cardinal-wings/server.key"
+# read_timeout_seconds = 60
+# write_timeout_seconds = 60
+# idle_timeout_seconds = 120
+
+# Rate limiting: per-IP and per-key token buckets.
+[rate_limit]
+ip_tps = 25
+ip_burst = 50
+key_tps = 10
+key_burst = 30
+max_clients = 4096
 
 # Panel credentials. role is "readonly" or "admin".
 [[keys]]
@@ -272,4 +373,12 @@ name = "node-1"
 address = "http://10.0.0.2:2375"
 token = "that-node-serve-token"
 enabled = false
+
+# Webhook notifications. events: task.completed, container.event, * (all).
+# [[webhooks]]
+# name = "panel"
+# url = "https://panel.example.com/hook"
+# events = ["task.completed", "container.event"]
+# secret = "shared-secret"
+# enabled = true
 `

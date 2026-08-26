@@ -55,6 +55,17 @@ type HostInfo struct {
 	Name         string `json:"Name"`
 }
 
+// CardinalVersion fetches the cardinal version reported by this node.
+func (c *Client) CardinalVersion(ctx context.Context) (string, error) {
+	var out struct {
+		Version string `json:"Version"`
+	}
+	if err := c.do(ctx, "GET", "/version", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Version, nil
+}
+
 // Info fetches cardinal's system info for this node.
 func (c *Client) Info(ctx context.Context) (*HostInfo, error) {
 	var out HostInfo

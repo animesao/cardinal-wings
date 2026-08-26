@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/runtime"
@@ -67,6 +68,58 @@ func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string, c *r
 				return
 			}
 			fl.Flush()
+		}
+	}
+}
+
+// handleContainerStatsStream polls container stats every ~2s and emits each
+// snapshot as an SSE event, so the panel can draw live CPU/mem charts.
+func handleContainerStatsStream(w http.ResponseWriter, r *http.Request, id string, c *runtime.Client) {
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	fl.Flush()
+
+	interval := 2 * time.Second
+	if v := r.URL.Query().Get("interval"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d >= 500*time.Millisecond {
+			interval = d
+		}
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	send := func() bool {
+		var s interface{}
+		if err := c.Stats(r.Context(), id, &s); err != nil {
+			return false
+		}
+		b, err := json.Marshal(s)
+		if err != nil {
+			return false
+		}
+		if _, err := w.Write([]byte("data: " + string(b) + "\n\n")); err != nil {
+			return false
+		}
+		fl.Flush()
+		return true
+	}
+
+	send()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+			if !send() {
+				return
+			}
 		}
 	}
 }

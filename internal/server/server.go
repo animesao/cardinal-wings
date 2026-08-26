@@ -31,19 +31,23 @@ var version = "dev"
 // daemon must be started through Run (which assigns it).
 var defaultClient *runtime.Client
 
-// Run starts wings: it launches the local `cardinal serve` subprocess, then
-// serves the panel-facing API on the configured address.
+// Run starts wings: it launches the local `cardinal serve` subprocess (if the
+// binary is present), then serves the panel-facing API on the configured
+// address. When cardinal is missing, wings still starts and reports the local
+// node as down — the panel can show degraded status instead of a dead daemon.
 func Run(cfg *config.Config) error {
-	local, err := agent.StartLocal()
-	if err != nil {
-		return fmt.Errorf("local cardinal: %w (is cardinal installed?)", err)
+	var local *agent.Local
+	if l, err := agent.StartLocal(); err == nil {
+		local = l
+		defer local.Stop()
+		defaultClient = local.Client()
+	} else {
+		logf("!! local cardinal unavailable: %v (nodes will show down)", err)
 	}
-	defer local.Stop()
-	defaultClient = local.Client()
 
-	// Populate the node registry: local node first, then every enabled remote
-	// node, so handlers can route with `?node=<name>`.
-	entries := []nodeEntry{{name: "local", client: local.Client(), local: true}}
+	// Populate the node registry: local node first (nil client when cardinal
+	// is missing), then every enabled remote node.
+	entries := []nodeEntry{{name: "local", client: defaultClient, local: true}}
 	for _, n := range agent.RemoteClients(cfg) {
 		entries = append(entries, nodeEntry{name: n.Name, client: n.Client})
 	}
@@ -61,42 +65,51 @@ func Run(cfg *config.Config) error {
 		initAudit("wings-audit.jsonl")
 	}
 
+	// Webhook notifications (task completion etc).
+	initWebhooks(cfg)
+
 	mw := auth.New(cfg)
-	mux := http.NewServeMux()
 
-	// --- v1 system endpoints (always available) ---
-	mux.HandleFunc("/v1/ping", handlePing)
-	mux.HandleFunc("/v1/version", handleVersion)
-	mux.HandleFunc("/v1/system/info", handleSystemInfo)
-	mux.HandleFunc("/v1/self", handleSelf)
-	mux.HandleFunc("/v1/metrics", handleMetrics)
-	mux.HandleFunc("/v1/events", handleEvents)
-	tasksRoutes(mux)
+	// Public (no auth): liveness and health checks for load balancers and
+	// monitoring. Everything else lives behind the authenticated chain.
+	public := http.NewServeMux()
+	public.HandleFunc("/v1/ping", handlePing)
+	public.HandleFunc("/healthz", handleHealthz)
 
-	// --- resource endpoints (behind auth) ---
-	containerRoutes(mux, mw)
-	imageRoutes(mux, mw)
-	blueprintRoutes(mux, mw)
-	servicesRoutes(mux, mw)
-	clusterRoutes(mux)
+	// Authenticated v1 API surface.
+	api := http.NewServeMux()
+	api.HandleFunc("/v1/version", handleVersion)
+	api.HandleFunc("/v1/system/info", handleSystemInfo)
+	api.HandleFunc("/v1/self", handleSelf)
+	api.HandleFunc("/v1/metrics", handleMetrics)
+	api.HandleFunc("/v1/events", handleEvents)
+	tasksRoutes(api)
+	containerRoutes(api, mw)
+	imageRoutes(api, mw)
+	blueprintRoutes(api, mw)
+	servicesRoutes(api, mw)
+	clusterRoutes(api)
 
 	// The authenticated chain: CORS -> per-key rate limit -> per-IP rate
 	// limit -> bearer auth -> audit.
-	var handler http.Handler = mux
+	var handler http.Handler = api
 	handler = mw.Authenticate(handler)
 	handler = auditMiddleware(handler)
 	handler = mw.RateLimitKey(handler)
 	handler = mw.RateLimit(handler)
 	handler = mw.CORS(handler)
 
+	// Everything else falls through to the authenticated API.
+	public.Handle("/", handler)
+
 	addr := net.JoinHostPort(cfg.Server.Host, fmt.Sprintf("%d", cfg.Server.Port))
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           handler,
+		Handler:           public,
 		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       60 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadTimeout:       durSeconds(cfg.Server.ReadTimeout, 60),
+		WriteTimeout:      durSeconds(cfg.Server.WriteTimeout, 60),
+		IdleTimeout:       durSeconds(cfg.Server.IdleTimeout, 120),
 		MaxHeaderBytes:    1 << 20,
 	}
 
@@ -129,6 +142,15 @@ func Run(cfg *config.Config) error {
 		defer cancel()
 		return srv.Shutdown(ctx)
 	}
+}
+
+// durSeconds converts a configured seconds value to a duration, falling back
+// to the default when the config leaves it at zero.
+func durSeconds(secs, def int) time.Duration {
+	if secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return time.Duration(def) * time.Second
 }
 
 func logf(format string, args ...interface{}) {
