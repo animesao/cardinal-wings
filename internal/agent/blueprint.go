@@ -8,9 +8,8 @@ import (
 	"strings"
 )
 
-// BlueprintInstall runs `cardinal blueprint install <name>` with optional
-// override flags, returning combined output.
-func BlueprintInstall(ctx context.Context, name string, memory, cpus string, env []string, yes bool) error {
+// blueprintInstallArgs builds `cardinal blueprint install <name>` args.
+func blueprintInstallArgs(name, memory, cpus string, env []string, yes bool) []string {
 	args := []string{"blueprint", "install", name}
 	if memory != "" {
 		args = append(args, "--memory", memory)
@@ -24,7 +23,18 @@ func BlueprintInstall(ctx context.Context, name string, memory, cpus string, env
 	if yes {
 		args = append(args, "-y")
 	}
-	return runCardinal(ctx, args...)
+	return args
+}
+
+// BlueprintInstall runs `cardinal blueprint install <name>` with optional
+// override flags.
+func BlueprintInstall(ctx context.Context, name string, memory, cpus string, env []string, yes bool) error {
+	return runCardinal(ctx, blueprintInstallArgs(name, memory, cpus, env, yes)...)
+}
+
+// BlueprintInstallOut runs `cardinal blueprint install` and returns its output.
+func BlueprintInstallOut(ctx context.Context, name string, memory, cpus string, env []string, yes bool) (string, error) {
+	return runCardinalOut(ctx, blueprintInstallArgs(name, memory, cpus, env, yes)...)
 }
 
 // BlueprintUninstall runs `cardinal blueprint uninstall <name>`.

@@ -100,6 +100,7 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 | GET | `/v1/containers/{id}/stats` | Docker stats schema |
 | GET | `/v1/containers/{id}/logs?tail=…&follow=1` | `follow=1` → SSE stream |
 | POST | `/v1/containers/{id}/exec` | runs a command, returns exec id |
+| POST | `/v1/containers/{id}/exec/stream` | runs a command, streams output as SSE (live log) |
 
 ### Images
 | Method | Path | Notes |

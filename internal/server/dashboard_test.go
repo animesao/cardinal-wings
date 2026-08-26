@@ -117,6 +117,50 @@ func TestHandleSelf(t *testing.T) {
 	}
 }
 
+func TestPaginate(t *testing.T) {
+	list := []runtime.Summary{
+		{Name: "a", Status: "running"},
+		{Name: "b", Status: "running"},
+		{Name: "c", Status: "exited"},
+		{Name: "d", Status: "exited"},
+	}
+
+	// Default page: limit 100, everything included.
+	q, _ := url.ParseQuery("")
+	p := paginate(list, q)
+	if len(p.items) != 4 || p.limit != 100 || p.offset != 0 {
+		t.Errorf("default page = %d items (limit %d, offset %d), want 4/100/0", len(p.items), p.limit, p.offset)
+	}
+
+	// limit=2
+	q2, _ := url.ParseQuery("limit=2")
+	p2 := paginate(list, q2)
+	if len(p2.items) != 2 || p2.items[0].Name != "a" || p2.items[1].Name != "b" {
+		t.Errorf("limit=2 page = %v", p2.items)
+	}
+
+	// offset=2
+	q3, _ := url.ParseQuery("limit=2&offset=2")
+	p3 := paginate(list, q3)
+	if len(p3.items) != 2 || p3.items[0].Name != "c" {
+		t.Errorf("offset=2 page = %v", p3.items)
+	}
+
+	// offset past end
+	q4, _ := url.ParseQuery("offset=99")
+	p4 := paginate(list, q4)
+	if len(p4.items) != 0 {
+		t.Errorf("offset past end = %v, want empty", p4.items)
+	}
+
+	// limit capped at 1000
+	q5, _ := url.ParseQuery("limit=5000")
+	p5 := paginate(list, q5)
+	if p5.limit != 1000 {
+		t.Errorf("limit cap = %d, want 1000", p5.limit)
+	}
+}
+
 func TestCodeForStatus(t *testing.T) {
 	if codeForStatus(http.StatusNotFound) != ErrNotFound {
 		t.Error("404 should map to not_found")

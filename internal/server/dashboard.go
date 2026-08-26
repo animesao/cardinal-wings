@@ -5,16 +5,18 @@ import (
 	"sync"
 
 	"github.com/animesao/cardinal-wings/internal/auth"
-)
-
-// nodeSummary is the per-node block returned by /v1/system/info.
+) // nodeSummary is the per-node block returned by /v1/system/info.
 type nodeSummary struct {
-	Name    string `json:"name"`
-	Status  string `json:"status"`
-	Running int    `json:"running"`
-	Stopped int    `json:"stopped"`
-	Total   int    `json:"total"`
-	Images  int    `json:"images"`
+	Name         string `json:"name"`
+	Status       string `json:"status"`
+	Running      int    `json:"running"`
+	Stopped      int    `json:"stopped"`
+	Total        int    `json:"total"`
+	Images       int    `json:"images"`
+	NCPU         int    `json:"ncpu,omitempty"`
+	MemTotal     int64  `json:"mem_total_bytes,omitempty"`
+	Architecture string `json:"architecture,omitempty"`
+	Hostname     string `json:"hostname,omitempty"`
 }
 
 // handleSystemInfo returns a cluster-wide dashboard aggregate: one summary per
@@ -74,6 +76,13 @@ func summarizeNode(r *http.Request, name string) nodeSummary {
 	// Images
 	if imgs, err := c.Images(r.Context()); err == nil {
 		ns.Images = len(imgs)
+	}
+	// Host info (cpu/mem) for the node card.
+	if info, err := c.Info(r.Context()); err == nil && info != nil {
+		ns.NCPU = info.NCPU
+		ns.MemTotal = info.MemTotal
+		ns.Architecture = info.Architecture
+		ns.Hostname = info.Name
 	}
 
 	return ns

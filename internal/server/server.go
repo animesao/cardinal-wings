@@ -48,6 +48,11 @@ func Run(cfg *config.Config) error {
 	}
 	registerNodes(entries)
 
+	// Background health checks for /v1/nodes.
+	hcCtx, hcCancel := context.WithCancel(context.Background())
+	defer hcCancel()
+	checker.start(hcCtx)
+
 	mw := auth.New(cfg)
 	mux := http.NewServeMux()
 
@@ -56,6 +61,8 @@ func Run(cfg *config.Config) error {
 	mux.HandleFunc("/v1/version", handleVersion)
 	mux.HandleFunc("/v1/system/info", handleSystemInfo)
 	mux.HandleFunc("/v1/self", handleSelf)
+	mux.HandleFunc("/v1/metrics", handleMetrics)
+	tasksRoutes(mux)
 
 	// --- resource endpoints (behind auth) ---
 	containerRoutes(mux, mw)

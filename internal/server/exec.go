@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
@@ -68,6 +69,46 @@ func handleContainerLogs(w http.ResponseWriter, r *http.Request, id string, c *r
 			fl.Flush()
 		}
 	}
+}
+
+// handleContainerExecStream runs a command and streams its output as SSE so a
+// panel can show a live log of the command. Runs via the local cardinal CLI
+// (see agent.StreamExec). Interactive stdin (a true TTY) is not supported yet.
+func handleContainerExecStream(w http.ResponseWriter, r *http.Request, id string) {
+	var req struct {
+		Cmd []string `json:"Cmd"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if len(req.Cmd) == 0 {
+		writeError(w, http.StatusBadRequest, "Cmd required")
+		return
+	}
+
+	fl, ok := w.(http.Flusher)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "streaming unsupported")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	fl.Flush()
+
+	emit := func(line string) {
+		_, _ = w.Write([]byte("data: " + line + "\n\n"))
+		fl.Flush()
+	}
+	err := agent.StreamExec(r.Context(), id, req.Cmd, emit)
+	if err != nil {
+		_, _ = w.Write([]byte("event: error\ndata: " + err.Error() + "\n\n"))
+		fl.Flush()
+	}
+	_, _ = w.Write([]byte("event: done\ndata: {}\n\n"))
+	fl.Flush()
 }
 
 // handleContainerExec runs a command in a container via cardinal's exec

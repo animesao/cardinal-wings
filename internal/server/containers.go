@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/animesao/cardinal-wings/internal/auth"
@@ -26,7 +27,13 @@ func containerRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 				return
 			}
 			filtered := filterContainers(list, r.URL.Query())
-			writeJSON(w, http.StatusOK, map[string]interface{}{"containers": filtered})
+			page := paginate(filtered, r.URL.Query())
+			writeJSON(w, http.StatusOK, map[string]interface{}{
+				"containers": page.items,
+				"total":      len(filtered),
+				"limit":      page.limit,
+				"offset":     page.offset,
+			})
 		case http.MethodPost:
 			mw.AdminOnly(http.HandlerFunc(handleContainerCreate)).ServeHTTP(w, r)
 		default:
@@ -77,6 +84,37 @@ func filterContainers(list []runtime.Summary, q url.Values) []runtime.Summary {
 	return out
 }
 
+// pageResult carries a sliced page plus the requested window.
+type pageResult struct {
+	items  []runtime.Summary
+	limit  int
+	offset int
+}
+
+// paginate applies ?limit= and ?offset= to a list. Defaults: limit 100,
+// offset 0; limit is capped at 1000 so a panel cannot fetch unbounded pages.
+func paginate(list []runtime.Summary, q url.Values) pageResult {
+	limit := 100
+	if v, err := strconv.Atoi(q.Get("limit")); err == nil && v > 0 {
+		limit = v
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	offset := 0
+	if v, err := strconv.Atoi(q.Get("offset")); err == nil && v > 0 {
+		offset = v
+	}
+	if offset >= len(list) {
+		return pageResult{items: []runtime.Summary{}, limit: limit, offset: offset}
+	}
+	end := offset + limit
+	if end > len(list) {
+		end = len(list)
+	}
+	return pageResult{items: list[offset:end], limit: limit, offset: offset}
+}
+
 // splitRef returns the container id and trailing action from a ref path.
 func splitRef(path string) (ref, action string) {
 	trimmed := strings.TrimPrefix(path, "/v1/containers/")
@@ -93,7 +131,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream":
 		return true
 	}
 	return action == "" && method == http.MethodDelete
@@ -150,6 +188,9 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "exec" && r.Method == http.MethodPost:
 		handleContainerExec(w, r, ref, c)
+
+	case action == "exec/stream" && r.Method == http.MethodPost:
+		handleContainerExecStream(w, r, ref)
 
 	case (action == "start" || action == "stop" || action == "restart" || action == "kill") && r.Method == http.MethodPost:
 		if err := c.Action(r.Context(), ref, action); err != nil {

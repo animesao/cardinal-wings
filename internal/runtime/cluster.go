@@ -47,6 +47,23 @@ func (c *Client) ContainersOnNode(ctx context.Context) (interface{}, error) {
 	return out, nil
 }
 
+// HostInfo is the subset of cardinal's /info the dashboard needs.
+type HostInfo struct {
+	NCPU         int    `json:"NCPU"`
+	MemTotal     int64  `json:"MemTotal"`
+	Architecture string `json:"Architecture"`
+	Name         string `json:"Name"`
+}
+
+// Info fetches cardinal's system info for this node.
+func (c *Client) Info(ctx context.Context) (*HostInfo, error) {
+	var out HostInfo
+	if err := c.do(ctx, "GET", "/info", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // PingNode returns nil when the node is reachable and its cluster is healthy.
 func (c *Client) PingNode(ctx context.Context) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)

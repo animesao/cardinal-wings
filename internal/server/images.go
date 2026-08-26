@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -8,9 +9,6 @@ import (
 	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/auth"
 )
-
-// PullImage pulls an image on the local node via the cardinal CLI.
-var PullImage = agent.PullImage
 
 // imageRoutes mounts the Phase 2 image endpoints against the runtime client.
 func imageRoutes(mux *http.ServeMux, mw *auth.Middleware) {
@@ -107,11 +105,10 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 		if req.Image == "" {
 			req.Image = ref
 		}
-		if err := PullImage(r.Context(), req.Image, req.Platform); err != nil {
-			writeErr(w, http.StatusInternalServerError, ErrInternal, "pull %s: %s", req.Image, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"pulled": req.Image})
+		id := taskMgr.Submit("image_pull", func(ctx context.Context) (string, error) {
+			return agent.PullImageOut(ctx, req.Image, req.Platform)
+		})
+		writeJSON(w, http.StatusAccepted, map[string]string{"task_id": id, "action": "pull", "image": req.Image})
 
 	case action == "tag" && r.Method == http.MethodPost:
 		repo := r.URL.Query().Get("repo")

@@ -8,7 +8,8 @@ cardinal-wings is a REST API daemon for managing
 entry point a control-plane / web panel (`cardinal-panel`) talks to instead of
 SSH + CLI — for one host or across the whole cardinal cluster.
 
-See **[SPEC.md](SPEC.md)** for the full technical plan.
+See **[SPEC.md](SPEC.md)** for the full technical plan and
+**[docs/api.md](docs/api.md)** for the API reference with curl examples.
 
 ## Why
 

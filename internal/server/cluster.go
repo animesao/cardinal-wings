@@ -14,22 +14,28 @@ func clusterRoutes(mux *http.ServeMux) {
 			return
 		}
 		names := registry.names()
+		snapshot := checker.snapshot()
 		nodes := make([]map[string]interface{}, 0, len(names))
 		for _, name := range names {
 			c := registry.byName(name)
 			if c == nil {
 				continue
 			}
-			status := "configured"
-			if h, err := c.Health(r.Context()); err == nil && h != "" {
-				status = h
+			node := map[string]interface{}{
+				"name":  name,
+				"url":   c.Base(),
+				"local": name == "local",
 			}
-			nodes = append(nodes, map[string]interface{}{
-				"name":   name,
-				"url":    c.Base(),
-				"status": status,
-				"local":  name == "local",
-			})
+			if st, ok := snapshot[name]; ok {
+				node["status"] = st.status
+				node["checked_at"] = st.checkedAt
+				if st.err != "" {
+					node["error"] = st.err
+				}
+			} else {
+				node["status"] = "unknown"
+			}
+			nodes = append(nodes, node)
 		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"nodes": nodes})
 	})

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -103,11 +104,10 @@ func handleBlueprintAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if action == "uninstall" && r.Method == http.MethodPost {
-		if err := agent.BlueprintUninstall(r.Context(), name); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"uninstalled": name})
+		id := taskMgr.Submit("blueprint_uninstall", func(ctx context.Context) (string, error) {
+			return "uninstalled " + name, agent.BlueprintUninstall(ctx, name)
+		})
+		writeJSON(w, http.StatusAccepted, map[string]string{"task_id": id, "action": "uninstall", "name": name})
 		return
 	}
 
@@ -123,11 +123,10 @@ func handleBlueprintAction(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
 		}
-		if err := agent.BlueprintInstall(r.Context(), name, req.Memory, req.CPUs, req.Env, req.Yes); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]string{"installed": name})
+		id := taskMgr.Submit("blueprint_install", func(ctx context.Context) (string, error) {
+			return agent.BlueprintInstallOut(ctx, name, req.Memory, req.CPUs, req.Env, req.Yes)
+		})
+		writeJSON(w, http.StatusAccepted, map[string]string{"task_id": id, "action": "install", "name": name})
 		return
 	}
 
