@@ -70,6 +70,38 @@ enabled = true
 	}
 }
 
+func TestLoadStripsInlineComments(t *testing.T) {
+	// Mirrors the config written by install.sh and config.example.toml, where the
+	// host line carries an inline comment. The hand-rolled parser must not leak
+	// the comment into the parsed host value (which would crash the listen).
+	content := `
+[server]
+host = "0.0.0.0"     # 0.0.0.0 = remote panel
+port = 8080
+
+[[keys]]
+name = "panel"   # panel key
+key = "f887c2d33815"
+role = "admin"   # full access
+`
+	cfg, err := Load(writeTemp(t, content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Fatalf("host leaked inline comment: got %q", cfg.Server.Host)
+	}
+	if cfg.Server.Port != 8080 {
+		t.Fatalf("port wrong: %d", cfg.Server.Port)
+	}
+	if len(cfg.Keys) != 1 || cfg.Keys[0].Key != "f887c2d33815" || cfg.Keys[0].Name != "panel" {
+		t.Fatalf("keys wrong with inline comments: %+v", cfg.Keys)
+	}
+	if cfg.Keys[0].Role != RoleAdmin {
+		t.Fatalf("role leaked comment: got %q", cfg.Keys[0].Role)
+	}
+}
+
 func TestValidateRejectsExternalWithoutKeys(t *testing.T) {
 	cfg := Default()
 	cfg.Server.Host = "0.0.0.0"

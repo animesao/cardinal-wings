@@ -116,6 +116,7 @@ func Load(path string) (*Config, error) {
 			section = parseSection(line)
 			continue
 		}
+		line = stripComment(line)
 		key, value, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
@@ -191,6 +192,30 @@ func Load(path string) (*Config, error) {
 
 func unquote(s string) string {
 	return strings.Trim(s, `"'`)
+}
+
+// stripComment removes a TOML inline comment (a `#` preceded by whitespace that
+// is not inside a quoted string), so `host = "0.0.0.0"  # loopback` parses as
+// host="0.0.0.0". Without this, an inline comment on a value line leaked into
+// the parsed value — e.g. host became `0.0.0.0"     # 0.0.0.0 = remote panel`,
+// which then failed to resolve as a hostname (crash loop on boot).
+func stripComment(s string) string {
+	inQuote := rune(0)
+	for i, r := range s {
+		switch {
+		case inQuote != 0 && r == inQuote:
+			inQuote = 0
+		case inQuote == 0 && (r == '"' || r == '\''):
+			inQuote = r
+		case r == '#' && inQuote == 0:
+			// Only treat it as a comment when preceded by space/tab; a bare
+			// `#` immediately after text (rare) is left alone.
+			if i > 0 && (s[i-1] == ' ' || s[i-1] == '\t') {
+				return strings.TrimRight(s[:i], " \t")
+			}
+		}
+	}
+	return s
 }
 
 // parseSection strips the outer braces from a TOML header, handling both a
