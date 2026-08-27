@@ -159,7 +159,22 @@ func isMutating(action, method string) bool {
 	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp":
 		return true
 	}
+	// File manager: reads (list/read/download) are non-mutating; the write ops
+	// and every other fm action require admin.
+	if strings.HasPrefix(action, "fm/") {
+		return rwFmMutating(action)
+	}
 	return action == "" && method == http.MethodDelete
+}
+
+// rwFmMutating reports whether an fm action mutates the container filesystem.
+func rwFmMutating(action string) bool {
+	switch {
+	case strings.HasPrefix(action, "fm/list"), strings.HasPrefix(action, "fm/read"), strings.HasPrefix(action, "fm/download"):
+		return false
+	default:
+		return true
+	}
 }
 
 func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
@@ -235,6 +250,9 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case strings.HasPrefix(action, "fs/") && r.Method == http.MethodGet:
 		handleFs(w, r)
+
+	case strings.HasPrefix(action, "fm/"):
+		handleFm(w, r, ref)
 
 	case action == "cp" && r.Method == http.MethodPost:
 		handleCp(w, r)

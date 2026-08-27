@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -16,6 +17,35 @@ import (
 // panel sees command output in real time.
 func StreamExec(ctx context.Context, id string, cmd []string, fn func(line string)) error {
 	return streamExec(ctx, id, cmd, nil, fn)
+}
+
+// ExecCapture runs a command in a container and returns all stdout as a
+// string (with optional stdin piped in). This powers the file manager: wings
+// runs `sh -c '<script>'` and the panel can read/write/upload/download files
+// even though cardinal's own `fs` CLI is read-only.
+func ExecCapture(ctx context.Context, id, script string, stdin []byte) (string, error) {
+	args := []string{"exec", id, "/bin/sh", "-c", script}
+	var in io.Reader
+	if len(stdin) > 0 {
+		in = bytes.NewReader(stdin)
+		args = []string{"exec", id, "-i", "/bin/sh", "-c", script}
+	}
+	c := buildCardinalCmd(ctx, args...)
+	if in != nil {
+		c.Stdin = in
+	}
+	out, err := c.Output()
+	if err != nil {
+		msg := err.Error()
+		if exit, ok := err.(*exec.ExitError); ok {
+			msg = strings.TrimSpace(string(exit.Stderr))
+			if msg == "" {
+				msg = fmt.Sprintf("exit code %d", exit.ExitCode())
+			}
+		}
+		return string(out), fmt.Errorf("cardinal exec: %s", msg)
+	}
+	return string(out), nil
 }
 
 // InteractiveExec runs `cardinal exec -i <id> <cmd...>` with stdin connected
