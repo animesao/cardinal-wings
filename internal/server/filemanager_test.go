@@ -3,6 +3,8 @@ package server
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -64,5 +66,27 @@ func TestFmListScriptParsing(t *testing.T) {
 	}
 	if !fileFound || !dirFound {
 		t.Fatalf("expected file (size 3) and sub dir in:\n%s", out)
+	}
+}
+
+// TestFmActionRouting guards against the path-parsing regression where
+// /fm/list dispatched with the container id as the action ("unknown fm
+// action: <id>") instead of reaching handleFmList. When fm/list is handled,
+// it attempts a container exec and fails upstream (no runtime here) with a
+// 502; a routing bug fails with a 404 "unknown fm action".
+func TestFmActionRouting(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/containers/deadbeef/fm/list?path=cm9vdA==", nil)
+	rr := httptest.NewRecorder()
+	handleContainerRef(rr, req)
+	if rr.Code == http.StatusNotFound && strings.Contains(rr.Body.String(), "unknown fm action") {
+		t.Fatalf("fm/list misrouted: %s", rr.Body.String())
+	}
+	// It should attempt the exec and fail upstream (502) or succeed with a real
+	// runtime. A 404 not_found here would mean the container may not exist.
+	if rr.Code == http.StatusNotFound {
+		return
+	}
+	if rr.Code != http.StatusGatewayTimeout && rr.Code != http.StatusBadGateway && rr.Code != http.StatusOK {
+		t.Errorf("fm/list status = %d, want 200/502, got body: %s", rr.Code, rr.Body.String())
 	}
 }

@@ -43,7 +43,7 @@ const fmListScript = `P=%s; cd -- "$P" 2>/dev/null || { echo "__ERR__no such dir
 // upload | mkdir | rm | move. Reads are GET, mutations are POST. Paths are
 // passed base64-encoded in query/body so arbitrary characters are safe.
 func handleFm(w http.ResponseWriter, r *http.Request, id string) {
-	action, _ := splitRef(r.URL.Path)
+	_, action := splitRef(r.URL.Path)
 	switch {
 	case strings.HasPrefix(action, "fm/list"):
 		handleFmList(w, r, id)
