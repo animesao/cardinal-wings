@@ -1,101 +1,210 @@
 #!/usr/bin/env bash
-# cardinal-wings installer — downloads a tagged release binary from GitHub
-# Releases and installs it as a systemd service.
-# Usage: curl -fsSL install.sh | bash   (installs "latest")
-#        ./install.sh v0.1.0            (or a specific tag)
-#        ./install.sh local             (build from the current directory)
+# ============================================================
+# cardinal-wings installer
+#
+# Installs a prebuilt release binary from GitHub Releases as a
+# systemd service and writes a working config with a generated
+# API key. No Go toolchain required.
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh | bash
+#   ./install.sh                    # install latest release
+#   ./install.sh v0.4.2             # install a specific tag
+#   sudo -E ./install.sh local      # build from this checkout (needs Go)
+#
+# Environment:
+#   WINGS_TLS=1      generate a self-signed cert and enable TLS
+#   WINGS_HOST=...   bind address (default 127.0.0.1; use 0.0.0.0 for remote panel)
+#   WINGS_PORT=...   bind port   (default 8080)
+# ============================================================
 set -euo pipefail
 
 OWNER="animesao"
 REPO="cardinal-wings"
+RAW="https://raw.githubusercontent.com/${OWNER}/${REPO}/main"
 
-# Version to install. "latest" resolves via the GitHub API; "local" builds
-# from the current directory (requires Go); anything else is a tag.
 VERSION="${1:-latest}"
-
 PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="${PREFIX}/bin"
 CONF_DIR="/etc/cardinal-wings"
+SYSTEMD_DIR="/etc/systemd/system"
 
-# Set WINGS_TLS=1 to generate a self-signed certificate and enable TLS in the
-# config. Off by default (loopback-only setups don't need it).
 WINGS_TLS="${WINGS_TLS:-0}"
+WINGS_HOST="${WINGS_HOST:-127.0.0.1}"
+WINGS_PORT="${WINGS_PORT:-8080}"
 
-# Detect OS and architecture for the release asset name.
+# ------------------------------------------------------------
+# helpers
+# ------------------------------------------------------------
+if [ "$(id -u)" != "0" ]; then
+  echo "error: run as root (sudo) — need to write ${BIN_DIR}, ${CONF_DIR}, ${SYSTEMD_DIR}" >&2
+  exit 1
+fi
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
 case "${ARCH}" in
-    x86_64)  ARCH="amd64" ;;
-    aarch64) ARCH="arm64" ;;
+  x86_64)  ARCH="amd64" ;;
+  aarch64|arm64) ARCH="arm64" ;;
 esac
 case "${OS}" in
-    linux) ASSET="cardinal-wings-linux-${ARCH}" ;;
-    darwin) ASSET="cardinal-wings-darwin-${ARCH}" ;;
-    *)
-        echo "unsupported platform: ${OS}/${ARCH}" >&2
-        exit 1
-        ;;
+  linux)  ASSET="cardinal-wings-linux-${ARCH}" ;;
+  darwin) ASSET="cardinal-wings-darwin-${ARCH}" ;;
+  *) echo "unsupported platform: ${OS}/${ARCH}" >&2; exit 1 ;;
 esac
 
 echo "==> cardinal-wings installer"
-echo "    platform: ${OS}/${ARCH}"
-echo "    prefix:   ${PREFIX}"
+echo "    platform: ${OS}/${ARCH}   bind: ${WINGS_HOST}:${WINGS_PORT}"
 
+# ------------------------------------------------------------
+# 1. binary (prebuilt by default; local build only with `local`)
+# ------------------------------------------------------------
 mkdir -p "${BIN_DIR}"
 
 if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
-    echo "==> building from local source"
-    go build -trimpath \
-        -ldflags="-s -w -X github.com/animesao/cardinal-wings/internal/server.version=dev" \
-        -o "${BIN_DIR}/cardinal-wings" .
+  if ! have go; then
+    echo "error: 'local' needs the Go toolchain (https://go.dev/dl/)." >&2
+    echo "       or drop the argument to install a prebuilt release binary." >&2
+    exit 1
+  fi
+  echo "==> building from local source"
+  go build -trimpath \
+    -ldflags="-s -w -X github.com/animesao/cardinal-wings/internal/server.version=dev" \
+    -o "${BIN_DIR}/cardinal-wings" .
 else
-    if [ "${VERSION}" = "latest" ]; then
-        echo "==> resolving latest release"
-        VERSION="$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
-            | grep -m1 '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')"
+  if [ "${VERSION}" = "latest" ]; then
+    echo "==> resolving latest release"
+    VERSION="$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
+      | grep -m1 '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')"
+    if [ -z "${VERSION}" ]; then
+      echo "error: could not resolve the latest release tag" >&2
+      exit 1
     fi
-    url="https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}"
-    echo "==> downloading ${VERSION}"
-    curl -fsSL "${url}" -o "${BIN_DIR}/cardinal-wings"
-    chmod +x "${BIN_DIR}/cardinal-wings"
+  fi
+  url="https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}"
+  echo "==> downloading ${VERSION} (${ASSET})"
+  curl -fsSL "${url}" -o "${BIN_DIR}/cardinal-wings"
+  chmod +x "${BIN_DIR}/cardinal-wings"
 fi
 
-echo "==> installing config"
-TLS_CFG=""
-if [ "${WINGS_TLS}" = "1" ]; then
+# ------------------------------------------------------------
+# 2. config — generated once, with a real API key inside
+# ------------------------------------------------------------
+mkdir -p "${CONF_DIR}"
+chmod 700 "${CONF_DIR}"
+
+if [ -f "${CONF_DIR}/config.toml" ]; then
+  echo "==> ${CONF_DIR}/config.toml already exists — keeping it"
+else
+  API_KEY="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  TLS_BLOCK=""
+  if [ "${WINGS_TLS}" = "1" ]; then
+    if ! have openssl; then
+      echo "error: WINGS_TLS=1 needs openssl" >&2; exit 1
+    fi
     echo "==> generating self-signed TLS certificate"
-    CERT="${CONF_DIR}/server.crt"
-    KEY="${CONF_DIR}/server.key"
-    if [ ! -f "${CERT}" ] || [ ! -f "${KEY}" ]; then
-        openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=cardinal-wings" \
-            -keyout "${KEY}" -out "${CERT}" 2>/dev/null
-        chmod 600 "${KEY}" "${CERT}"
-    fi
-    TLS_CFG=$'\n# TLS\ntls_cert = "'"${CERT}"'"\ntls_key  = "'"${KEY}"'"\n'
+    openssl req -x509 -newkey rsa:2048 -nodes -days 365 \
+      -subj "/CN=cardinal-wings" \
+      -keyout "${CONF_DIR}/server.key" -out "${CONF_DIR}/server.crt" 2>/dev/null
+    chmod 600 "${CONF_DIR}/server.key" "${CONF_DIR}/server.crt"
+    TLS_BLOCK=$'\ntls_cert = "'"${CONF_DIR}/server.crt"$'"\ntls_key  = "'"${CONF_DIR}/server.key"$'"'
+  fi
+
+  umask 077
+  cat > "${CONF_DIR}/config.toml" <<EOF
+# cardinal-wings configuration
+# generated by install.sh — keep this file secret (it contains the API key)
+
+[server]
+host = "${WINGS_HOST}"     # 127.0.0.1 = local panel only; 0.0.0.0 = remote panel
+port = ${WINGS_PORT}${TLS_BLOCK}
+
+[rate_limit]
+ip_tps = 25
+ip_burst = 50
+key_tps = 10
+key_burst = 30
+max_clients = 4096
+
+# Panel credentials. role: "admin" (full access) or "readonly".
+[[keys]]
+name = "panel"
+key = "${API_KEY}"
+role = "admin"
+
+# Remote cluster nodes (optional):
+# [[nodes]]
+# name = "node-2"
+# address = "http://10.0.0.2:2375"
+# token = "that-node-serve-token"
+# enabled = true
+EOF
+  chmod 600 "${CONF_DIR}/config.toml"
+  echo "==> wrote ${CONF_DIR}/config.toml"
+  echo ""
+  echo "    ┌──────────────────────────────────────────────┐"
+  echo "    │  API KEY (give this to the panel):           │"
+  echo "    │  ${API_KEY}  │"
+  echo "    └──────────────────────────────────────────────┘"
+  echo ""
 fi
 
-if [ ! -f "${CONF_DIR}/config.toml" ]; then
-    mkdir -p "${CONF_DIR}"
-    chmod 700 "${CONF_DIR}"
-    install -m 600 /dev/null "${CONF_DIR}/config.toml"
-    if [ -n "${TLS_CFG}" ]; then
-        printf '%s\n' "${TLS_CFG}" >> "${CONF_DIR}/config.toml"
-    fi
-    echo "    wrote empty ${CONF_DIR}/config.toml — edit it to add keys"
+# ------------------------------------------------------------
+# 3. systemd unit (from the checkout, else downloaded)
+# ------------------------------------------------------------
+if [ -f "systemd/cardinal-wings.service" ]; then
+  UNIT_SRC="systemd/cardinal-wings.service"
 else
-    echo "    ${CONF_DIR}/config.toml already present — leaving it untouched"
-    echo "    (set tls_cert/tls_key manually to enable TLS)"
+  echo "==> fetching systemd unit"
+  UNIT_SRC="/tmp/cardinal-wings.service"
+  curl -fsSL "${RAW}/systemd/cardinal-wings.service" -o "${UNIT_SRC}"
 fi
-install -m 600 "${CONF_DIR}/config.toml" "${CONF_DIR}/config.example.toml" 2>/dev/null || true
+install -m 644 "${UNIT_SRC}" "${SYSTEMD_DIR}/cardinal-wings.service"
+systemctl daemon-reload 2>/dev/null || true
 
-echo "==> installing systemd unit"
-if [ -f systemd/cardinal-wings.service ]; then
-    install -m 644 systemd/cardinal-wings.service /etc/systemd/system/cardinal-wings.service
-    systemctl daemon-reload
+# ------------------------------------------------------------
+# 4. cardinal runtime check (wings drives `cardinal serve`)
+# ------------------------------------------------------------
+if have cardinal; then
+  echo "==> cardinal runtime found: $(command -v cardinal)"
+else
+  echo ""
+  echo "    NOTE: 'cardinal' was not found in PATH."
+  echo "    wings spawns 'cardinal serve' to manage containers, so install it first:"
+  echo "      curl -fsSL https://raw.githubusercontent.com/animesao/cardinal/main/install.sh | sudo bash"
+  echo ""
+fi
+
+# ------------------------------------------------------------
+# 5. verify the binary actually runs
+# ------------------------------------------------------------
+echo "==> verifying binary"
+if "${BIN_DIR}/cardinal-wings" --help >/dev/null 2>&1 || "${BIN_DIR}/cardinal-wings" --version >/dev/null 2>&1; then
+  echo "    binary OK"
+else
+  # No --help/--version flag: run it against the generated config with a short
+  # timeout and see whether the process starts without immediately dying.
+  if timeout 3 "${BIN_DIR}/cardinal-wings" --config "${CONF_DIR}/config.toml" >/dev/null 2>&1; then
+    echo "    binary OK (started briefly)"
+  else
+    echo "    warning: could not verify the binary automatically" >&2
+  fi
 fi
 
 echo
 echo "cardinal-wings installed: ${BIN_DIR}/cardinal-wings"
-echo "  1. edit  ${CONF_DIR}/config.toml  (add [[keys]])"
-echo "  2. run   systemctl enable --now cardinal-wings"
-echo "  3. check systemctl status cardinal-wings"
+echo
+echo "Next steps:"
+echo "  1. systemctl enable --now cardinal-wings"
+echo "  2. systemctl status cardinal-wings          # should be active (running)"
+echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print \"pong\""
+echo "     curl -s -H \"Authorization: Bearer <API_KEY>\" localhost:${WINGS_PORT}/v1/version"
+echo "  4. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
+echo "     and paste the API key from ${CONF_DIR}/config.toml"
+echo
+if [ "${WINGS_HOST}" = "127.0.0.1" ]; then
+  echo "NOTE: bound to loopback — only the local panel can reach it."
+  echo "      For a remote panel re-run with WINGS_HOST=0.0.0.0 (TLS recommended)."
+fi
