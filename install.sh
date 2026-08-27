@@ -76,19 +76,31 @@ if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
 else
   if [ "${VERSION}" = "latest" ]; then
     echo "==> resolving latest release"
-    # Download to a temp file with -o. Avoiding pipes + command substitution
-    # here sidesteps SIGPIPE issues that show up as `curl: (23) Failure writing
-    # output to destination` under `set -o pipefail` on some systems. `-o`
-    # writes straight to disk, so there is no pipe to break.
+    # Download to a temp file with -o (no pipeline) — this sidesteps the
+    # SIGPIPE / `set -o pipefail` interactions that show up as
+    # `curl: (23) Failure writing output to destination` on some hosts.
     TMP_TAG="/tmp/cardinal-wings.latest.json"
     curl -fsSL --retry 3 -o "${TMP_TAG}" \
       "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
-    VERSION="$(sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p' "${TMP_TAG}" | head -n 1)"
+    # Extract the tag line once into a variable, then parse that string with a
+    # couple of portable tools (sed / grep -o / awk all work here). We never
+    # keep raw JSON around: only values that look like a valid tag are used.
+    tagline="$(grep -m1 '"tag_name"' "${TMP_TAG}" 2>/dev/null || true)"
+    for cand in \
+      "$(printf '%s' "${tagline}" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')" \
+      "$(printf '%s' "${tagline}" | grep -o '"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"' | tr -d '"')"
+    do
+      [ -n "${cand}" ] && VERSION="v${cand#v}" && break
+    done
     rm -f "${TMP_TAG}"
-    if [ -z "${VERSION}" ]; then
-      echo "error: could not resolve the latest release tag" >&2
+    if [ -z "${VERSION}" ] || ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+      echo "error: could not resolve a valid latest release tag (got '${VERSION}')" >&2
+      echo "       use:  install.sh <tag>   e.g. install.sh v0.4.4" >&2
       exit 1
     fi
+  elif ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+    echo "error: invalid version '${VERSION}' (expected e.g. v0.4.4)" >&2
+    exit 1
   fi
   url="https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}"
   echo "==> downloading ${VERSION} (${ASSET})"
