@@ -166,8 +166,13 @@ func handleFmWrite(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "content must be base64")
 		return
 	}
-	script := "mkdir -p -- $(dirname -- " + shq(path) + ") && base64 -d > " + shq(path)
-	if _, err := agent.ExecCapture(r.Context(), id, script, []byte(contentB64+"\n")); err != nil {
+	// cardinal's `exec` CLI drops stdin (its nsenter wrapper lacks -i), so we
+	// can't pipe content in. Instead we embed the base64 inline: base64 only
+	// contains [A-Za-z0-9+/=], so it is always safe to single-quote. The file
+	// manager targets game configs which are small; very large files would
+	// need a chunked approach.
+	script := "mkdir -p -- $(dirname -- " + shq(path) + ") && printf '%s' " + shq(contentB64) + " | base64 -d > " + shq(path)
+	if _, err := agent.ExecCapture(r.Context(), id, script, nil); err != nil {
 		writeErr(w, http.StatusBadGateway, ErrUpstream, "fm/write: %s", err.Error())
 		return
 	}
