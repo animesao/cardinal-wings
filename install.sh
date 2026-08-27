@@ -76,8 +76,14 @@ if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
 else
   if [ "${VERSION}" = "latest" ]; then
     echo "==> resolving latest release"
-    VERSION="$(curl -fsSL "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest" \
-      | grep -m1 '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')"
+    # Resolve the tag as a variable, not a pipe: pipes + `set -o pipefail` + a
+    # downstream `grep -m1` can SIGPIPE curl (exit 23 "Failure writing output
+    # to destination"), aborting the whole install. Command substitution reads
+    # curl's output fully and fails cleanly with a real message instead.
+    VERSION="$(curl -fsSL --retry 3 "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest")"
+    if [ "${VERSION}" != "${VERSION//tag_name:/}" ]; then
+      VERSION="$(printf '%s' "${VERSION}" | grep -m1 '"tag_name"' | sed 's/.*"tag_name": "\(.*\)".*/\1/')"
+    fi
     if [ -z "${VERSION}" ]; then
       echo "error: could not resolve the latest release tag" >&2
       exit 1
