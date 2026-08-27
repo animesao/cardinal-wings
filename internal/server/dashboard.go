@@ -15,6 +15,7 @@ type nodeSummary struct {
 	Images          int    `json:"images"`
 	NCPU            int    `json:"ncpu,omitempty"`
 	MemTotal        int64  `json:"mem_total_bytes,omitempty"`
+	DiskTotal       int64  `json:"disk_total_bytes,omitempty"`
 	Architecture    string `json:"architecture,omitempty"`
 	Hostname        string `json:"hostname,omitempty"`
 	CardinalVersion string `json:"cardinal_version,omitempty"`
@@ -84,6 +85,10 @@ func summarizeNode(r *http.Request, name string) nodeSummary {
 		ns.MemTotal = info.MemTotal
 		ns.Architecture = info.Architecture
 		ns.Hostname = info.Name
+	}
+	// Total disk from the host filesystem (wings runs on the node).
+	if total := diskTotalBytes(); total > 0 {
+		ns.DiskTotal = total
 	}
 	// Cardinal version so the panel can warn on incompatibility.
 	if v, err := c.CardinalVersion(r.Context()); err == nil {
