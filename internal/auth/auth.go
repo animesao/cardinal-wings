@@ -51,18 +51,26 @@ func New(cfg *config.Config) *Middleware {
 // Authenticate gates the request on a valid API key and embeds the role.
 func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
 		const prefix = "Bearer "
-		if len(auth) < len(prefix) || auth[:len(prefix)] != prefix {
+		token := ""
+		if auth := r.Header.Get("Authorization"); len(auth) >= len(prefix) && auth[:len(prefix)] == prefix {
+			token = auth[len(prefix):]
+		} else if t := r.URL.Query().Get("token"); t != "" {
+			// Browser WebSockets cannot set the Authorization header, so the
+			// panel passes the API key as ?token= on the console WS URL. Only
+			// honored when the header is absent.
+			token = t
+		}
+		if token == "" {
 			writeError(w, http.StatusUnauthorized, "missing bearer token")
 			return
 		}
-		role, ok := m.cfg.Authorize(auth[len(prefix):])
+		role, ok := m.cfg.Authorize(token)
 		if !ok {
 			writeError(w, http.StatusForbidden, "invalid API key")
 			return
 		}
-		name, _ := m.cfg.KeyName(auth[len(prefix):])
+		name, _ := m.cfg.KeyName(token)
 		ctx := WithRole(r.Context(), role)
 		ctx = WithKeyName(ctx, name)
 		next.ServeHTTP(w, r.WithContext(ctx))

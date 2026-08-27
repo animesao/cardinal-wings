@@ -57,6 +57,30 @@ func TestAuthenticateValidToken(t *testing.T) {
 	}
 }
 
+func TestAuthenticateQueryToken(t *testing.T) {
+	// Browser WebSockets can't set the Authorization header, so the panel sends
+	// the API key as ?token= on the console WS URL. It must authenticate.
+	mw := newMiddleware()
+	handler := mw.Authenticate(mw.RateLimit(http.HandlerFunc(okHandler)))
+	req := httptest.NewRequest("GET", "http://example.test/v1/containers/x/terminal/ws?token="+secret, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("query token should authenticate, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAuthenticateQueryTokenWrong(t *testing.T) {
+	mw := newMiddleware()
+	handler := mw.Authenticate(mw.RateLimit(http.HandlerFunc(okHandler)))
+	req := httptest.NewRequest("GET", "http://example.test/v1/containers/x/terminal/ws?token=wrong", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("wrong query token should be 403, got %d", rec.Code)
+	}
+}
+
 func TestAdminOnlyBlocksReadonly(t *testing.T) {
 	keys := []config.APIKey{
 		{Name: "admin", Key: "admin-key", Role: config.RoleAdmin},
