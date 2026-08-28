@@ -6,12 +6,15 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 )
@@ -28,6 +31,39 @@ type fmEntry struct {
 // single quote inside is escaped as the standard '\” sequence.
 func shq(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// fmJailCache maps container id → the directory the file manager is jailed to.
+var fmJailCache sync.Map
+
+// fmRoot detects the mounted data directory of a container and jails the file
+// manager to it: /data (itzg-style images) or /home/container
+// (Pterodactyl-style). Falls back to / if neither exists. The result is
+// cached per container — mounts do not change while the container lives.
+func fmRoot(ctx context.Context, id string) string {
+	if v, ok := fmJailCache.Load(id); ok {
+		return v.(string)
+	}
+	out, err := agent.ExecCapture(ctx, id, `for d in /data /home/container; do [ -d "$d" ] && { echo "$d"; exit 0; }; done; echo /`, nil)
+	root := "/"
+	if err == nil {
+		if s := strings.TrimSpace(out); strings.HasPrefix(s, "/") {
+			root = s
+		}
+	}
+	fmJailCache.Store(id, root)
+	return root
+}
+
+// fmResolve clamps a user-supplied path inside the jail root. The user path
+// is first cleaned against a virtual root (so `..` cannot climb above "/"),
+// then joined onto the jail root. Absolute, relative and ../-laden inputs all
+// stay under root.
+func fmResolve(root, p string) string {
+	if p == "" {
+		p = "/"
+	}
+	return path.Join(root, path.Clean("/"+p))
 }
 
 // fmListScript lists a container dir, one line per entry:
@@ -91,6 +127,8 @@ func handleFmList(w http.ResponseWriter, r *http.Request, id string) {
 	if !ok {
 		path = "/"
 	}
+	virtual := path
+	path = fmResolve(fmRoot(r.Context(), id), path)
 	script := fmt.Sprintf(fmListScript, shq(path))
 	out, err := agent.ExecCapture(r.Context(), id, script, nil)
 	if err != nil {
@@ -126,7 +164,9 @@ func handleFmList(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		entries = append(entries, fmEntry{Type: typ, Size: size, ModTime: mt, Name: name})
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{"path": path, "entries": entries})
+	// Return the VIRTUAL path (pre-jail) so clients can echo it back in
+	// follow-up requests without double-prefixing.
+	writeJSON(w, http.StatusOK, map[string]interface{}{"path": virtual, "entries": entries})
 }
 
 func handleFmRead(w http.ResponseWriter, r *http.Request, id string) {
@@ -135,6 +175,7 @@ func handleFmRead(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "path required")
 		return
 	}
+	path = fmResolve(fmRoot(r.Context(), id), path)
 	script := "base64 < " + shq(path) + " 2>/dev/null || exit 1"
 	out, err := agent.ExecCapture(r.Context(), id, script, nil)
 	if err != nil {
@@ -166,6 +207,7 @@ func handleFmWrite(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "content must be base64")
 		return
 	}
+	path = fmResolve(fmRoot(r.Context(), id), path)
 	// cardinal's `exec` CLI drops stdin (its nsenter wrapper lacks -i), so we
 	// can't pipe content in. Instead we embed the base64 inline: base64 only
 	// contains [A-Za-z0-9+/=], so it is always safe to single-quote. The file
@@ -190,6 +232,7 @@ func handleFmMkdir(w http.ResponseWriter, r *http.Request, id string) {
 	if v, _ := body["recursive"].(bool); v {
 		recursive = true
 	}
+	path = fmResolve(fmRoot(r.Context(), id), path)
 	script := "mkdir"
 	if recursive {
 		script += " -p"
@@ -207,6 +250,12 @@ func handleFmRm(w http.ResponseWriter, r *http.Request, id string) {
 	path, ok := pathArg(r, body, "path")
 	if !ok || path == "" {
 		writeError(w, http.StatusBadRequest, "path required")
+		return
+	}
+	root := fmRoot(r.Context(), id)
+	path = fmResolve(root, path)
+	if path == root || path == "/" {
+		writeError(w, http.StatusBadRequest, "refusing to remove the data root")
 		return
 	}
 	script := "rm -rf -- " + shq(path)
@@ -227,6 +276,13 @@ func handleFmMove(w http.ResponseWriter, r *http.Request, id string) {
 	dst, ok := pathArg(r, body, "dst")
 	if !ok || dst == "" {
 		writeError(w, http.StatusBadRequest, "dst required")
+		return
+	}
+	root := fmRoot(r.Context(), id)
+	src = fmResolve(root, src)
+	dst = fmResolve(root, dst)
+	if src == root || dst == root {
+		writeError(w, http.StatusBadRequest, "refusing to move the data root")
 		return
 	}
 	script := "mkdir -p -- $(dirname -- " + shq(dst) + ") && mv -f -- " + shq(src) + " " + shq(dst)
