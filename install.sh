@@ -10,12 +10,12 @@
 #   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh -o /tmp/install-wings.sh
 #   sudo bash /tmp/install-wings.sh
 #
-# Alternative (may fail on some systems due to SIGPIPE):
+# Alternative:
 #   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh | sudo bash
 #
 #   sudo bash install.sh              # install latest release
 #   sudo bash install.sh v0.4.2       # install a specific tag
-#   sudo bash install.sh local        # build from this checkout (needs Go)
+#   sudo bash install.sh local        # build from local checkout (needs Go)
 #
 # Environment:
 #   WINGS_TLS=1      generate a self-signed cert and enable TLS
@@ -42,25 +42,21 @@ WINGS_PORT="${WINGS_PORT:-8080}"
 # helpers
 # ------------------------------------------------------------
 if [ "$(id -u)" != "0" ]; then
-  echo "error: run as root (sudo) — need to write ${BIN_DIR}, ${CONF_DIR}, ${SYSTEMD_DIR}" >&2
+  echo "error: run as root (sudo) -- need to write ${BIN_DIR}, ${CONF_DIR}, ${SYSTEMD_DIR}" >&2
   exit 1
 fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Robust download helper — writes to a temp file first, then moves.
-# This avoids SIGPIPE and "Failure writing output to destination" errors
-# that happen when piping curl | bash or when the target path is on a
-# slow/mounted filesystem.
+# Robust download helper -- writes to a temp file first, then moves.
+# Avoids "curl: (23) Failure writing output to destination" from pipes.
 download() {
   local url="$1" dest="$2"
   local tmp="${dest}.tmp.$$"
   local try
-
   for try in 1 2 3; do
     if curl -fsSL --retry 2 --connect-timeout 10 --max-time 300 \
          "${url}" -o "${tmp}"; then
-      # Verify we actually got a non-empty file
       if [ -s "${tmp}" ]; then
         mv -f "${tmp}" "${dest}"
         return 0
@@ -73,7 +69,6 @@ download() {
     fi
     sleep 2
   done
-
   echo "error: failed to download ${url} after 3 attempts" >&2
   return 1
 }
@@ -94,14 +89,13 @@ echo "==> cardinal-wings installer"
 echo "    platform: ${OS}/${ARCH}   bind: ${WINGS_HOST}:${WINGS_PORT}"
 
 # ------------------------------------------------------------
-# 1. binary (prebuilt by default; local build only with `local`)
+# 1. binary
 # ------------------------------------------------------------
 mkdir -p "${BIN_DIR}"
 
 if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
   if ! have go; then
     echo "error: 'local' needs the Go toolchain (https://go.dev/dl/)." >&2
-    echo "       or drop the argument to install a prebuilt release binary." >&2
     exit 1
   fi
   echo "==> building from local source"
@@ -114,8 +108,7 @@ else
     TMP_TAG="/tmp/cardinal-wings.latest.json"
     if ! curl -fsSL --retry 3 --connect-timeout 10 -o "${TMP_TAG}" \
       "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"; then
-      echo "error: could not fetch latest release info from GitHub API" >&2
-      echo "       check your internet connection and try again" >&2
+      echo "error: could not fetch latest release info" >&2
       exit 1
     fi
     tagline="$(grep -m1 '"tag_name"' "${TMP_TAG}" 2>/dev/null || true)"
@@ -128,7 +121,6 @@ else
     rm -f "${TMP_TAG}"
     if [ -z "${VERSION}" ] || ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
       echo "error: could not resolve a valid latest release tag (got '${VERSION}')" >&2
-      echo "       use:  install.sh <tag>   e.g. install.sh v0.4.4" >&2
       exit 1
     fi
   elif ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
@@ -139,7 +131,7 @@ else
   echo "==> downloading ${VERSION} (${ASSET})"
   if ! download "${url}" "${BIN_DIR}/cardinal-wings"; then
     echo "" >&2
-    echo "Tip: if piping via 'curl | bash', try downloading the script first:" >&2
+    echo "Tip: try downloading the script first then running it:" >&2
     echo "  curl -fsSL ${RAW}/install.sh -o /tmp/install-wings.sh" >&2
     echo "  sudo bash /tmp/install-wings.sh" >&2
     exit 1
@@ -148,16 +140,17 @@ else
 fi
 
 # ------------------------------------------------------------
-# 2. config — generated once, with a real API key inside
+# 2. config -- generated once, with a real API key inside
 # ------------------------------------------------------------
 mkdir -p "${CONF_DIR}"
 chmod 700 "${CONF_DIR}"
 
 if [ -f "${CONF_DIR}/config.toml" ]; then
-  echo "==> ${CONF_DIR}/config.toml already exists — keeping it"
+  echo "==> ${CONF_DIR}/config.toml already exists -- keeping it"
 else
   API_KEY="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-  TLS_BLOCK=""
+
+  # Generate TLS cert if requested
   if [ "${WINGS_TLS}" = "1" ]; then
     if ! have openssl; then
       echo "error: WINGS_TLS=1 needs openssl" >&2; exit 1
@@ -167,50 +160,47 @@ else
       -subj "/CN=cardinal-wings" \
       -keyout "${CONF_DIR}/server.key" -out "${CONF_DIR}/server.crt" 2>/dev/null
     chmod 600 "${CONF_DIR}/server.key" "${CONF_DIR}/server.crt"
-    TLS_BLOCK=$'\ntls_cert = "'"${CONF_DIR}/server.crt"'"'\ntls_key  = "'"${CONF_DIR}/server.key"'"'
   fi
 
+  # Write config file -- avoid complex quoting by writing directly
   umask 077
-  cat > "${CONF_DIR}/config.toml" <<EOF
-# cardinal-wings configuration
-# generated by install.sh — keep this file secret (it contains the API key)
-
-[server]
-host = "${WINGS_HOST}"     # 127.0.0.1 = local panel only; 0.0.0.0 = remote panel
-port = ${WINGS_PORT}${TLS_BLOCK}
-
-[rate_limit]
-ip_tps = 25
-ip_burst = 50
-key_tps = 10
-key_burst = 30
-max_clients = 4096
-
-# Panel credentials. role: "admin" (full access) or "readonly".
-[[keys]]
-name = "panel"
-key = "${API_KEY}"
-role = "admin"
-
-# Remote cluster nodes (optional):
-# [[nodes]]
-# name = "node-2"
-# address = "http://10.0.0.2:2375"
-# token = "that-node-serve-token"
-# enabled = true
-EOF
+  {
+    echo "# cardinal-wings configuration"
+    echo "# generated by install.sh"
+    echo ""
+    echo "[server]"
+    echo "host = \"${WINGS_HOST}\""
+    echo "port = ${WINGS_PORT}"
+    if [ "${WINGS_TLS}" = "1" ]; then
+      echo "tls_cert = \"${CONF_DIR}/server.crt\""
+      echo "tls_key  = \"${CONF_DIR}/server.key\""
+    fi
+    echo ""
+    echo "[rate_limit]"
+    echo "ip_tps = 25"
+    echo "ip_burst = 50"
+    echo "key_tps = 10"
+    echo "key_burst = 30"
+    echo "max_clients = 4096"
+    echo ""
+    echo "[[keys]]"
+    echo "name = \"panel\""
+    echo "key = \"${API_KEY}\""
+    echo "role = \"admin\""
+  } > "${CONF_DIR}/config.toml"
   chmod 600 "${CONF_DIR}/config.toml"
+
   echo "==> wrote ${CONF_DIR}/config.toml"
   echo ""
-  echo "    ┌──────────────────────────────────────────────┐"
-  echo "    │  API KEY (give this to the panel):           │"
-  echo "    │  ${API_KEY}  │"
-  echo "    └──────────────────────────────────────────────┘"
+  echo "    +----------------------------------------------+"
+  echo "    |  API KEY (give this to the panel):           |"
+  echo "    |  ${API_KEY}  |"
+  echo "    +----------------------------------------------+"
   echo ""
 fi
 
 # ------------------------------------------------------------
-# 3. systemd unit (from the checkout, else downloaded)
+# 3. systemd unit
 # ------------------------------------------------------------
 if [ -f "systemd/cardinal-wings.service" ]; then
   UNIT_SRC="systemd/cardinal-wings.service"
@@ -223,20 +213,20 @@ install -m 644 "${UNIT_SRC}" "${SYSTEMD_DIR}/cardinal-wings.service"
 systemctl daemon-reload 2>/dev/null || true
 
 # ------------------------------------------------------------
-# 4. cardinal runtime check (wings drives `cardinal serve`)
+# 4. cardinal runtime check
 # ------------------------------------------------------------
 if have cardinal; then
   echo "==> cardinal runtime found: $(command -v cardinal)"
 else
   echo ""
   echo "    NOTE: 'cardinal' was not found in PATH."
-  echo "    wings spawns 'cardinal serve' to manage containers, so install it first:"
+  echo "    Install it first:"
   echo "      curl -fsSL https://raw.githubusercontent.com/animesao/cardinal/main/install.sh | sudo bash"
   echo ""
 fi
 
 # ------------------------------------------------------------
-# 5. verify the binary actually runs
+# 5. verify the binary
 # ------------------------------------------------------------
 echo "==> verifying binary"
 if "${BIN_DIR}/cardinal-wings" --help >/dev/null 2>&1 || "${BIN_DIR}/cardinal-wings" --version >/dev/null 2>&1; then
@@ -245,7 +235,7 @@ else
   if timeout 3 "${BIN_DIR}/cardinal-wings" --config "${CONF_DIR}/config.toml" >/dev/null 2>&1; then
     echo "    binary OK (started briefly)"
   else
-    echo "    warning: could not verify the binary automatically" >&2
+    echo "    warning: could not verify binary automatically" >&2
   fi
 fi
 
@@ -255,12 +245,11 @@ echo
 echo "Next steps:"
 echo "  1. systemctl enable --now cardinal-wings"
 echo "  2. systemctl status cardinal-wings          # should be active (running)"
-echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print \"pong\""
-echo "     curl -s -H \"Authorization: Bearer <API_KEY>\" localhost:${WINGS_PORT}/v1/version"
+echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
 echo "  4. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
 echo "     and paste the API key from ${CONF_DIR}/config.toml"
 echo
 if [ "${WINGS_HOST}" = "127.0.0.1" ]; then
-  echo "NOTE: bound to loopback — only the local panel can reach it."
+  echo "NOTE: bound to loopback -- only the local panel can reach it."
   echo "      For a remote panel re-run with WINGS_HOST=0.0.0.0 (TLS recommended)."
 fi
