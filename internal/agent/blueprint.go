@@ -37,6 +37,11 @@ func BlueprintInstallOut(ctx context.Context, name string, memory, cpus string, 
 	return runCardinalOut(ctx, blueprintInstallArgs(name, memory, cpus, env, yes)...)
 }
 
+// BootstrapEnsure installs and starts Cardinal's persistent boot supervisor.
+func BootstrapEnsure(ctx context.Context) error {
+	return runCardinal(ctx, "bootstrap", "--install")
+}
+
 // BlueprintUninstall runs `cardinal blueprint uninstall <name>`.
 func BlueprintUninstall(ctx context.Context, name string) error {
 	return runCardinal(ctx, "blueprint", "uninstall", name)

@@ -7,6 +7,9 @@
 
 - Linux/amd64 and Linux/arm64 binaries (version stamped into `/v1/version`)
 - `install.sh` — installs this daemon and wires the systemd service
+- Automatic Cardinal boot supervisor setup via `cardinal bootstrap --install`
+- `POST /v1/bootstrap/ensure` — idempotently enables and starts `cardinal-bootstrap.service` for panel-managed hosts
+- Database Host provisioning can ensure boot recovery before creating `restart=always` containers
 
 ## Install
 

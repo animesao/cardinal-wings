@@ -216,7 +216,15 @@ systemctl daemon-reload 2>/dev/null || true
 # 4. cardinal runtime check
 # ------------------------------------------------------------
 if have cardinal; then
-  echo "==> cardinal runtime found: $(command -v cardinal)"
+  CARDINAL_BIN="$(command -v cardinal)"
+  echo "==> cardinal runtime found: ${CARDINAL_BIN}"
+  echo "==> enabling cardinal boot supervisor"
+  if "${CARDINAL_BIN}" bootstrap --install; then
+    echo "    cardinal-bootstrap enabled"
+  else
+    echo "    warning: could not enable cardinal-bootstrap automatically" >&2
+    echo "    run manually: sudo cardinal bootstrap --install" >&2
+  fi
 else
   echo ""
   echo "    NOTE: 'cardinal' was not found in PATH."
@@ -244,9 +252,11 @@ echo "cardinal-wings installed: ${BIN_DIR}/cardinal-wings"
 echo
 echo "Next steps:"
 echo "  1. systemctl enable --now cardinal-wings"
-echo "  2. systemctl status cardinal-wings          # should be active (running)"
-echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
-echo "  4. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
+echo "  2. systemctl enable --now cardinal-bootstrap"
+echo "  3. systemctl status cardinal-wings          # should be active (running)"
+echo "  4. systemctl status cardinal-bootstrap      # boot recovery supervisor"
+echo "  5. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
+echo "  6. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
 echo "     and paste the API key from ${CONF_DIR}/config.toml"
 echo
 if [ "${WINGS_HOST}" = "127.0.0.1" ]; then

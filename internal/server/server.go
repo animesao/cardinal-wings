@@ -88,6 +88,7 @@ func Run(cfg *config.Config) error {
 	imageRoutes(api, mw)
 	blueprintRoutes(api, mw)
 	servicesRoutes(api, mw)
+	bootstrapRoutes(api, mw)
 	clusterRoutes(api)
 
 	// The authenticated chain: CORS -> per-key rate limit -> per-IP rate
