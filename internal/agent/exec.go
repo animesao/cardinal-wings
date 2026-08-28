@@ -48,13 +48,6 @@ func ExecCapture(ctx context.Context, id, script string, stdin []byte) (string, 
 	return string(out), nil
 }
 
-// InteractiveExec runs `cardinal exec -i <id> <cmd...>` with stdin connected
-// to the provided input reader, so a panel can drive an interactive command
-// (a shell) over a terminal. stdout/stderr lines go to fn.
-func InteractiveExec(ctx context.Context, id string, cmd []string, stdin io.Reader, fn func(line string)) error {
-	return streamExec(ctx, id, cmd, stdin, fn)
-}
-
 func streamExec(ctx context.Context, id string, cmd []string, stdin io.Reader, fn func(line string)) error {
 	if len(cmd) == 0 {
 		return fmt.Errorf("cmd required")
@@ -104,6 +97,61 @@ func streamExec(ctx context.Context, id string, cmd []string, stdin io.Reader, f
 	if err != nil {
 		msg := err.Error()
 		if exit, ok := err.(*exec.ExitError); ok {
+			msg = strings.TrimSpace(string(exit.Stderr))
+			if msg == "" {
+				msg = fmt.Sprintf("exit code %d", exit.ExitCode())
+			}
+		}
+		return fmt.Errorf("cardinal exec: %s", msg)
+	}
+	return nil
+}
+
+// InteractiveExec runs cardinal exec -it <id> <cmd...> with PTY allocation.
+// The -t flag tells cardinal to allocate a pseudo-terminal so the shell gets
+// echo, prompts, and line editing. Output is forwarded raw (not line-scanned)
+// because PTY output includes control sequences that scanners would mangle.
+func InteractiveExec(ctx context.Context, id string, cmd []string, stdin io.Reader, fn func(string)) error {
+	if len(cmd) == 0 {
+		return fmt.Errorf("cmd required")
+	}
+	args := []string{"exec", id, "-i", "-t"}
+	args = append(args, cmd...)
+	c := buildCardinalCmd(ctx, args...)
+
+	if stdin != nil {
+		c.Stdin = stdin
+	}
+	stdout, err := c.StdoutPipe()
+	if err != nil {
+		return err
+	}
+
+	if err := c.Start(); err != nil {
+		return fmt.Errorf("cardinal exec: %w", err)
+	}
+
+	// Read raw output (PTY produces binary data with control sequences)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdout.Read(buf)
+			if n > 0 {
+				fn(string(buf[:n]))
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	waitErr := c.Wait()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if waitErr != nil {
+		msg := waitErr.Error()
+		if exit, ok := waitErr.(*exec.ExitError); ok {
 			msg = strings.TrimSpace(string(exit.Stderr))
 			if msg == "" {
 				msg = fmt.Sprintf("exit code %d", exit.ExitCode())

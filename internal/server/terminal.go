@@ -50,10 +50,11 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 	// Attach uses cardinal attach which connects to the container's main
 	// process via unix socket — real interactive I/O, no shell wrapper.
 	go func() {
-		// Use exec -i /bin/sh to get an interactive shell.
+		// Use exec -it /bin/sh to get an interactive shell with a PTY.
 		// cardinal attach connects to PID 1 (the main process), which for
 		// game servers is the game itself — it does not read stdin as a shell.
-		// exec -i spawns a proper /bin/sh with interactive I/O.
+		// exec -it allocates a pseudo-terminal so the shell gets echo, prompts,
+		// and line editing.
 		pipeR, pipeW := io.Pipe()
 		go func() {
 			for line := range stdinCh {
