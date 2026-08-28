@@ -159,6 +159,11 @@ func isMutating(action, method string) bool {
 	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp":
 		return true
 	}
+	// Backup restore (POST) uploads an archive into the container — mutating.
+	// Backup download (GET) is a read, same as fm/download.
+	if action == "backup" {
+		return method == http.MethodPost
+	}
 	// File manager: reads (list/read/download) are non-mutating; the write ops
 	// and every other fm action require admin.
 	if strings.HasPrefix(action, "fm/") {
@@ -229,6 +234,9 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "logs" && r.Method == http.MethodGet:
 		handleContainerLogs(w, r, ref, c)
+
+	case action == "backup" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		handleContainerBackup(w, r, ref)
 
 	case action == "exec" && r.Method == http.MethodPost:
 		handleContainerExec(w, r, ref, c)

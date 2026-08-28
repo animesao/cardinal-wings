@@ -232,3 +232,34 @@ func Attach(ctx context.Context, id string, stdinCh <-chan string, fn func(strin
 	}
 	return nil
 }
+
+// RawExec runs `cardinal exec [-i] <id> <cmd...>` with raw binary stdin/stdout
+// and returns the piped stdout stream plus a Wait function — no line
+// processing anywhere. Unlike StreamExec (line-scanned text) this is for
+// binary payloads: container data backups where `tar czf -` streams out of
+// stdout and archives stream into stdin.
+func RawExec(ctx context.Context, id string, cmd []string, stdin io.Reader) (stdout io.ReadCloser, wait func() error, err error) {
+	if len(cmd) == 0 {
+		return nil, nil, fmt.Errorf("cmd required")
+	}
+	args := []string{"exec", id}
+	if stdin != nil {
+		args = append(args, "-i")
+	}
+	args = append(args, cmd...)
+	c := buildCardinalCmd(ctx, args...)
+
+	if stdin != nil {
+		c.Stdin = stdin
+	}
+	out, err := c.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	c.Stderr = nil // stderr merged into stdout would corrupt binary output
+
+	if err := c.Start(); err != nil {
+		return nil, nil, fmt.Errorf("cardinal exec: %w", err)
+	}
+	return out, c.Wait, nil
+}
