@@ -6,11 +6,16 @@
 # systemd service and writes a working config with a generated
 # API key. No Go toolchain required.
 #
-# Usage:
-#   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh | bash
-#   ./install.sh                    # install latest release
-#   ./install.sh v0.4.2             # install a specific tag
-#   sudo -E ./install.sh local      # build from this checkout (needs Go)
+# Usage (recommended — avoids pipe issues):
+#   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh -o /tmp/install-wings.sh
+#   sudo bash /tmp/install-wings.sh
+#
+# Alternative (may fail on some systems due to SIGPIPE):
+#   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh | sudo bash
+#
+#   sudo bash install.sh              # install latest release
+#   sudo bash install.sh v0.4.2       # install a specific tag
+#   sudo bash install.sh local        # build from this checkout (needs Go)
 #
 # Environment:
 #   WINGS_TLS=1      generate a self-signed cert and enable TLS
@@ -42,6 +47,36 @@ if [ "$(id -u)" != "0" ]; then
 fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Robust download helper — writes to a temp file first, then moves.
+# This avoids SIGPIPE and "Failure writing output to destination" errors
+# that happen when piping curl | bash or when the target path is on a
+# slow/mounted filesystem.
+download() {
+  local url="$1" dest="$2"
+  local tmp="${dest}.tmp.$$"
+  local try
+
+  for try in 1 2 3; do
+    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 300 \
+         "${url}" -o "${tmp}"; then
+      # Verify we actually got a non-empty file
+      if [ -s "${tmp}" ]; then
+        mv -f "${tmp}" "${dest}"
+        return 0
+      fi
+      echo "warning: downloaded empty file from ${url}" >&2
+      rm -f "${tmp}"
+    else
+      echo "warning: download attempt ${try}/3 failed for ${url}" >&2
+      rm -f "${tmp}"
+    fi
+    sleep 2
+  done
+
+  echo "error: failed to download ${url} after 3 attempts" >&2
+  return 1
+}
 
 OS="$(uname -s | tr '[:upper:]' '[:lower:]')"
 ARCH="$(uname -m)"
@@ -76,15 +111,13 @@ if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
 else
   if [ "${VERSION}" = "latest" ]; then
     echo "==> resolving latest release"
-    # Download to a temp file with -o (no pipeline) — this sidesteps the
-    # SIGPIPE / `set -o pipefail` interactions that show up as
-    # `curl: (23) Failure writing output to destination` on some hosts.
     TMP_TAG="/tmp/cardinal-wings.latest.json"
-    curl -fsSL --retry 3 -o "${TMP_TAG}" \
-      "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"
-    # Extract the tag line once into a variable, then parse that string with a
-    # couple of portable tools (sed / grep -o / awk all work here). We never
-    # keep raw JSON around: only values that look like a valid tag are used.
+    if ! curl -fsSL --retry 3 --connect-timeout 10 -o "${TMP_TAG}" \
+      "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"; then
+      echo "error: could not fetch latest release info from GitHub API" >&2
+      echo "       check your internet connection and try again" >&2
+      exit 1
+    fi
     tagline="$(grep -m1 '"tag_name"' "${TMP_TAG}" 2>/dev/null || true)"
     for cand in \
       "$(printf '%s' "${tagline}" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')" \
@@ -104,7 +137,13 @@ else
   fi
   url="https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}"
   echo "==> downloading ${VERSION} (${ASSET})"
-  curl -fsSL "${url}" -o "${BIN_DIR}/cardinal-wings"
+  if ! download "${url}" "${BIN_DIR}/cardinal-wings"; then
+    echo "" >&2
+    echo "Tip: if piping via 'curl | bash', try downloading the script first:" >&2
+    echo "  curl -fsSL ${RAW}/install.sh -o /tmp/install-wings.sh" >&2
+    echo "  sudo bash /tmp/install-wings.sh" >&2
+    exit 1
+  fi
   chmod +x "${BIN_DIR}/cardinal-wings"
 fi
 
@@ -128,7 +167,7 @@ else
       -subj "/CN=cardinal-wings" \
       -keyout "${CONF_DIR}/server.key" -out "${CONF_DIR}/server.crt" 2>/dev/null
     chmod 600 "${CONF_DIR}/server.key" "${CONF_DIR}/server.crt"
-    TLS_BLOCK=$'\ntls_cert = "'"${CONF_DIR}/server.crt"$'"\ntls_key  = "'"${CONF_DIR}/server.key"$'"'
+    TLS_BLOCK=$'\ntls_cert = "'"${CONF_DIR}/server.crt"'"'\ntls_key  = "'"${CONF_DIR}/server.key"'"'
   fi
 
   umask 077
@@ -178,7 +217,7 @@ if [ -f "systemd/cardinal-wings.service" ]; then
 else
   echo "==> fetching systemd unit"
   UNIT_SRC="/tmp/cardinal-wings.service"
-  curl -fsSL "${RAW}/systemd/cardinal-wings.service" -o "${UNIT_SRC}"
+  curl -fsSL --retry 2 --connect-timeout 10 "${RAW}/systemd/cardinal-wings.service" -o "${UNIT_SRC}"
 fi
 install -m 644 "${UNIT_SRC}" "${SYSTEMD_DIR}/cardinal-wings.service"
 systemctl daemon-reload 2>/dev/null || true
@@ -203,8 +242,6 @@ echo "==> verifying binary"
 if "${BIN_DIR}/cardinal-wings" --help >/dev/null 2>&1 || "${BIN_DIR}/cardinal-wings" --version >/dev/null 2>&1; then
   echo "    binary OK"
 else
-  # No --help/--version flag: run it against the generated config with a short
-  # timeout and see whether the process starts without immediately dying.
   if timeout 3 "${BIN_DIR}/cardinal-wings" --config "${CONF_DIR}/config.toml" >/dev/null 2>&1; then
     echo "    binary OK (started briefly)"
   else
