@@ -50,11 +50,24 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 	// Attach uses cardinal attach which connects to the container's main
 	// process via unix socket — real interactive I/O, no shell wrapper.
 	go func() {
-		err := agent.Attach(sessCtx, containerID, stdinCh, func(data string) {
+		// Use exec -i /bin/sh to get an interactive shell.
+		// cardinal attach connects to PID 1 (the main process), which for
+		// game servers is the game itself — it does not read stdin as a shell.
+		// exec -i spawns a proper /bin/sh with interactive I/O.
+		pipeR, pipeW := io.Pipe()
+		go func() {
+			for line := range stdinCh {
+				if _, err := pipeW.Write([]byte(line)); err != nil {
+					return
+				}
+			}
+			pipeW.Close()
+		}()
+		err := agent.InteractiveExec(sessCtx, containerID, []string{"/bin/sh"}, pipeR, func(data string) {
 			s.broadcast(data)
 		})
 		_ = err
-		s.broadcast("__session_ended__")
+		s.broadcast("\r\n__session_ended__")
 	}()
 
 	tm.mu.Lock()
