@@ -113,3 +113,74 @@ func streamExec(ctx context.Context, id string, cmd []string, stdin io.Reader, f
 	}
 	return nil
 }
+
+// Attach runs `cardinal attach <id>` which connects to the container's
+// running main process via its unix console socket. stdin/stdout are piped
+// through the provided channels so the caller can drive an interactive
+// session (e.g. a WebSocket terminal).
+//
+// stdinCh: caller sends user input here; the goroutine writes it to cardinal's stdin.
+// fn:      called for each chunk of output received from the container.
+func Attach(ctx context.Context, id string, stdinCh <-chan string, fn func(string)) error {
+	c := buildCardinalCmd(ctx, "attach", id)
+
+	stdinW, err := c.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("attach stdin pipe: %w", err)
+	}
+	stdoutR, err := c.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("attach stdout pipe: %w", err)
+	}
+	c.Stderr = nil // merge stderr into stdout
+
+	if err := c.Start(); err != nil {
+		return fmt.Errorf("cardinal attach: %w", err)
+	}
+
+	// Read container output → caller
+	done := make(chan error, 1)
+	go func() {
+		buf := make([]byte, 4096)
+		for {
+			n, err := stdoutR.Read(buf)
+			if n > 0 {
+				fn(string(buf[:n]))
+			}
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+
+	// Caller input → container stdin
+	go func() {
+		defer stdinW.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case line, ok := <-stdinCh:
+				if !ok {
+					return
+				}
+				if _, err := io.WriteString(stdinW, line); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
+	// Wait for process to exit
+	waitErr := c.Wait()
+	<-done // wait for reader goroutine
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if waitErr != nil {
+		return fmt.Errorf("cardinal attach: %w", waitErr)
+	}
+	return nil
+}

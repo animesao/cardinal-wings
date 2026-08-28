@@ -19,7 +19,7 @@ type terminalSession struct {
 	mu        sync.Mutex
 	id        string
 	closed    bool
-	stdin     io.WriteCloser
+	stdinCh   chan string
 	cancel    context.CancelFunc
 	ring      []string
 	subs      map[chan string]struct{}
@@ -37,23 +37,23 @@ var terminals = &terminalManager{sessions: map[string]*terminalSession{}}
 // open starts an interactive shell session in a container. If one is already
 // open for the container it is replaced.
 func (tm *terminalManager) open(ctx context.Context, containerID string) (*terminalSession, error) {
-	pr, pw := io.Pipe()
 	sessCtx, cancel := context.WithCancel(ctx)
+	stdinCh := make(chan string, 64)
 
 	s := &terminalSession{
 		id:     containerID,
-		stdin:  pw,
+		stdinCh: stdinCh,
 		cancel: cancel,
 		subs:   map[chan string]struct{}{},
 	}
 
+	// Attach uses cardinal attach which connects to the container's main
+	// process via unix socket — real interactive I/O, no shell wrapper.
 	go func() {
-		err := agent.InteractiveExec(sessCtx, containerID, []string{"/bin/sh"}, pr, func(line string) {
-			s.broadcast(line)
+		err := agent.Attach(sessCtx, containerID, stdinCh, func(data string) {
+			s.broadcast(data)
 		})
 		_ = err
-		_ = pr.Close()
-		_ = pw.Close()
 		s.broadcast("__session_ended__")
 	}()
 
@@ -110,16 +110,17 @@ func (s *terminalSession) subscribe() (<-chan string, func()) {
 
 func (s *terminalSession) close() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return
 	}
 	s.closed = true
+	s.mu.Unlock()
 	if s.cancel != nil {
 		s.cancel()
 	}
-	if s.stdin != nil {
-		_ = s.stdin.Close()
+	if s.stdinCh != nil {
+		close(s.stdinCh)
 	}
 }
 
@@ -138,12 +139,21 @@ func (tm *terminalManager) remove(id string) {
 // writeInput feeds stdin of the session for a container.
 func (s *terminalSession) writeInput(data string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.closed {
+		s.mu.Unlock()
 		return io.ErrClosedPipe
 	}
-	_, err := io.WriteString(s.stdin, data)
-	return err
+	s.mu.Unlock()
+	// Feed into the attach stdin channel
+	if s.stdinCh != nil {
+		select {
+		case s.stdinCh <- data:
+			return nil
+		default:
+			return io.ErrShortWrite
+		}
+	}
+	return io.ErrClosedPipe
 }
 
 func handleTerminalOpen(w http.ResponseWriter, r *http.Request) {
