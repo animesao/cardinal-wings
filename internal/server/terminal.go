@@ -41,10 +41,10 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 	stdinCh := make(chan string, 64)
 
 	s := &terminalSession{
-		id:     containerID,
+		id:      containerID,
 		stdinCh: stdinCh,
-		cancel: cancel,
-		subs:   map[chan string]struct{}{},
+		cancel:  cancel,
+		subs:    map[chan string]struct{}{},
 	}
 
 	// Attach uses cardinal attach which connects to the container's main
