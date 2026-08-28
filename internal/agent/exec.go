@@ -88,9 +88,7 @@ func streamExec(ctx context.Context, id string, cmd []string, stdin io.Reader, f
 		sc.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
-			if line != "" {
-				fn(line)
-			}
+			fn(line)
 		}
 		done <- struct{}{}
 	}
