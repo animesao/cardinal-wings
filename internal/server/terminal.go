@@ -12,9 +12,9 @@ import (
 	"github.com/animesao/cardinal-wings/internal/ws"
 )
 
-// terminalSession is one interactive exec (e.g. /bin/sh) in a container.
-// Output lines are kept in a small ring buffer (so late SSE subscribers see
-// recent output) and broadcast to live subscribers.
+// terminalSession is one console session attached to a container's main
+// process. Output chunks are kept in a small ring buffer (so late SSE
+// subscribers see recent output) and broadcast to live subscribers.
 type terminalSession struct {
 	mu        sync.Mutex
 	id        string
@@ -34,8 +34,8 @@ type terminalManager struct {
 
 var terminals = &terminalManager{sessions: map[string]*terminalSession{}}
 
-// open starts an interactive shell session in a container. If one is already
-// open for the container it is replaced.
+// open starts a console session attached to the container's main process.
+// If one is already open for the container it is replaced.
 func (tm *terminalManager) open(ctx context.Context, containerID string) (*terminalSession, error) {
 	sessCtx, cancel := context.WithCancel(ctx)
 	stdinCh := make(chan string, 64)
@@ -47,24 +47,14 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 		subs:    map[chan string]struct{}{},
 	}
 
-	// Attach uses cardinal attach which connects to the container's main
-	// process via unix socket — real interactive I/O, no shell wrapper.
+	// cardinal attach connects to the container's console socket — the
+	// stdin/stdout of the main process (PID 1). For game servers this is the
+	// game console itself: typed lines go to the game (e.g. Minecraft
+	// `list`, `say`, `stop`) and game log output streams back live. This
+	// mirrors how Pterodactyl's console works; a /bin/sh exec would open a
+	// shell NEXT to the game instead of talking TO it.
 	go func() {
-		// Use exec -it /bin/sh to get an interactive shell with a PTY.
-		// cardinal attach connects to PID 1 (the main process), which for
-		// game servers is the game itself — it does not read stdin as a shell.
-		// exec -it allocates a pseudo-terminal so the shell gets echo, prompts,
-		// and line editing.
-		pipeR, pipeW := io.Pipe()
-		go func() {
-			for line := range stdinCh {
-				if _, err := pipeW.Write([]byte(line)); err != nil {
-					return
-				}
-			}
-			pipeW.Close()
-		}()
-		err := agent.InteractiveExec(sessCtx, containerID, []string{"/bin/sh"}, pipeR, func(data string) {
+		err := agent.Attach(sessCtx, containerID, stdinCh, func(data string) {
 			s.broadcast(data)
 		})
 		_ = err
@@ -184,7 +174,7 @@ func handleTerminalOpen(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, ErrInternal, "terminal: %s", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"session": id, "shell": "/bin/sh"})
+	writeJSON(w, http.StatusOK, map[string]string{"session": id, "shell": "attach"})
 }
 
 func handleTerminalInput(w http.ResponseWriter, r *http.Request) {
