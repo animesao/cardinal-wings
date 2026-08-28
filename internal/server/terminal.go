@@ -58,7 +58,7 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 			s.broadcast(data)
 		})
 		_ = err
-		s.broadcast("\r\n__session_ended__")
+		s.broadcast("__session_ended__")
 	}()
 
 	tm.mu.Lock()
@@ -288,7 +288,10 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			if line == "__session_ended__" {
 				return
 			}
-			if err := conn.WriteText([]byte(line + "\r\n")); err != nil {
+			// Chunks already contain the real newlines from the container
+			// output — do not append anything, the browser renders them
+			// verbatim with pre-wrap.
+			if err := conn.WriteText([]byte(line)); err != nil {
 				return
 			}
 		}

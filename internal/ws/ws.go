@@ -69,8 +69,8 @@ func Upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 	return &Conn{conn: conn, r: bufio.NewReader(conn), w: bufio.NewWriter(conn)}, nil
 }
 
-// ReadText reads one text message, returning its payload. The connection must
-// be used from a single goroutine.
+// ReadText reads one text (or binary, treated as text) message, returning
+// its payload. The connection must be used from a single goroutine.
 func (c *Conn) ReadText() ([]byte, error) {
 	fin, opcode, payload, err := readFrame(c.r)
 	if err != nil {
@@ -80,7 +80,7 @@ func (c *Conn) ReadText() ([]byte, error) {
 	if opcode == 0x8 { // close
 		return nil, io.EOF
 	}
-	if opcode != 0x1 { // text
+	if opcode != 0x1 && opcode != 0x2 { // text or binary — panels may send either
 		return nil, fmt.Errorf("unexpected opcode %d", opcode)
 	}
 	return payload, nil
