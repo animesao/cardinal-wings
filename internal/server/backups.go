@@ -9,9 +9,13 @@ package server
 // (?clean=1) so the restore is exact, not a merge.
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -48,13 +52,64 @@ func handleContainerBackup(w http.ResponseWriter, r *http.Request, ref string) {
 	}
 }
 
-// streamBackup pipes `tar czf - -C <root> .` from the container to the
-// response body with zero buffering — the panel (or curl) writes the archive
-// to disk while tar is still running inside the container.
+// hostDataRoot returns the host filesystem path of the container's data
+// directory when the overlay is mounted, so archive create/restore can run
+// on the host directly. Host tar is reliable for every base image — running
+// tar inside the container (via exec) breaks on images whose entrypoint is
+// not a plain shell (e.g. itzg/minecraft-server).
+func hostDataRoot(ref string) (string, error) {
+	p, mounted, err := containerDataRoot(ref)
+	if err != nil {
+		return "", err
+	}
+	if p == "" || !mounted {
+		return "", fmt.Errorf("overlay not mounted")
+	}
+	return p, nil
+}
+
+// streamHostBackup pipes `tar czf - -C <root> .` from the host filesystem to
+// the response body with zero buffering — the panel (or curl) writes the
+// archive to disk while tar is still streamings.
 func streamBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 
+	// Prefer archiving on the host (works for every image).
+	if hostRoot, herr := hostDataRoot(ref); herr == nil {
+		if hostRoot != "/" && root != "" { // root arg is the container jail; ignore for host path
+			cmd := exec.Command("tar", "czf", "-", "-C", hostRoot, ".")
+			cmd.Stderr = nil
+			out, err := cmd.StdoutPipe()
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "backup archive: "+err.Error())
+				return
+			}
+			if err := cmd.Start(); err != nil {
+				writeError(w, http.StatusInternalServerError, "backup archive: "+err.Error())
+				return
+			}
+
+			w.Header().Set("Content-Type", "application/gzip")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"container-%s-backup.tar.gz\"", ref))
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.WriteHeader(http.StatusOK)
+
+			if _, err := copyAndClose(w, out); err != nil {
+				logf("backup %s: client copy aborted: %v", ref, err)
+				cmd.Process.Kill()
+				_ = cmd.Wait()
+				return
+			}
+			err = cmd.Wait()
+			if err != nil {
+				logf("backup %s: host tar exited with error: %v", ref, err)
+			}
+			return
+		}
+	}
+
+	// Fallback: tar inside the container (older data layout / unmounted overlay).
 	out, wait, err := agent.RawExec(ctx, ref, []string{"/bin/sh", "-c",
 		fmt.Sprintf("tar czf - -C %s . 2>/dev/null", shq(root))}, nil)
 	if err != nil {
@@ -73,17 +128,51 @@ func streamBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 		return
 	}
 	if err := wait(); err != nil {
-		// tar already streamed; a trailing failure (e.g. file changed while
-		// reading) is logged but headers cannot be rewritten.
 		logf("backup %s: tar exited with error: %v", ref, err)
 	}
 }
 
 // restoreBackup accepts a tar.gz body and extracts it into the data root.
 // With ?clean=1 the root is emptied first (exact restore); without it the
-// archive is extracted on top of existing files.
+// archive is extracted on top of existing files. Prefers extracting on the
+// host (via the overlay data directory) so it works for every base image;
+// falls back to tar inside the container when the overlay isn't mounted.
 func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 	clean := r.URL.Query().Get("clean") == "1"
+
+	// Host path restore — robust for images whose entrypoint is not a shell.
+	if hostRoot, herr := hostDataRoot(ref); herr == nil && hostRoot != "/" {
+		if clean {
+			entries, err := os.ReadDir(hostRoot)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "clean data root: "+err.Error())
+				return
+			}
+			var firstErr error
+			for _, e := range entries {
+				if perr := os.RemoveAll(filepath.Join(hostRoot, e.Name())); perr != nil && firstErr == nil {
+					firstErr = perr
+				}
+			}
+			if firstErr != nil {
+				writeError(w, http.StatusInternalServerError, "clean data root: "+firstErr.Error())
+				return
+			}
+		}
+
+		cmd := exec.Command("tar", "xzf", "-", "-C", hostRoot)
+		cmd.Stdin = r.Body
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("restore: host tar failed: %v %s", err, strings.TrimSpace(stderr.String())))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"restored": ref, "clean": fmt.Sprintf("%t", clean)})
+		return
+	}
+
+	// Fallback: clean + extract inside the container (unmounted overlay).
 	if clean {
 		// Empty the data root, but never the root itself.
 		script := fmt.Sprintf("find %s -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +", shq(root))
@@ -108,7 +197,6 @@ func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 
 	// Drain stdout so tar never blocks on a full pipe; report it in the
 	// response if the restore failed.
-	var drainErr error
 	buf := make([]byte, 4096)
 	go func() {
 		for {
@@ -117,7 +205,6 @@ func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 			}
 		}
 	}()
-	_ = drainErr
 
 	if err := wait(); err != nil {
 		msg := err.Error()
