@@ -21,6 +21,10 @@
 #   WINGS_TLS=1      generate a self-signed cert and enable TLS
 #   WINGS_HOST=...   bind address (default 127.0.0.1; use 0.0.0.0 for remote panel)
 #   WINGS_PORT=...   bind port   (default 8080)
+#   WINGS_SFTP=0|1   enable per-container SFTP server (default 1)
+#   WINGS_SFTP_HOST= bind address for SFTP (default 0.0.0.0)
+#   WINGS_SFTP_PORT= SFTP listen port (default 2022)
+#   WINGS_NO_FIREWALL=1  skip automatic firewall port opening
 # ============================================================
 set -euo pipefail
 
@@ -37,6 +41,10 @@ SYSTEMD_DIR="/etc/systemd/system"
 WINGS_TLS="${WINGS_TLS:-0}"
 WINGS_HOST="${WINGS_HOST:-127.0.0.1}"
 WINGS_PORT="${WINGS_PORT:-8080}"
+WINGS_SFTP="${WINGS_SFTP:-1}"
+WINGS_SFTP_HOST="${WINGS_SFTP_HOST:-0.0.0.0}"
+WINGS_SFTP_PORT="${WINGS_SFTP_PORT:-2022}"
+WINGS_NO_FIREWALL="${WINGS_NO_FIREWALL:-0}"
 
 # ------------------------------------------------------------
 # helpers
@@ -175,6 +183,9 @@ else
       echo "tls_cert = \"${CONF_DIR}/server.crt\""
       echo "tls_key  = \"${CONF_DIR}/server.key\""
     fi
+    echo "sftp_enabled = ${WINGS_SFTP}"
+    echo "sftp_host = \"${WINGS_SFTP_HOST}\""
+    echo "sftp_port = ${WINGS_SFTP_PORT}"
     echo ""
     echo "[rate_limit]"
     echo "ip_tps = 25"
@@ -234,7 +245,48 @@ else
 fi
 
 # ------------------------------------------------------------
-# 5. verify the binary
+# 5. open firewall ports
+# ------------------------------------------------------------
+open_ports=()
+if [ "${WINGS_HOST}" != "127.0.0.1" ] && [ "${WINGS_HOST}" != "localhost" ] && [ "${WINGS_HOST}" != "::1" ]; then
+  open_ports+=("${WINGS_PORT}/tcp")   # wings API (remote panel)
+fi
+if [ "${WINGS_SFTP}" = "1" ] && [ "${WINGS_SFTP_HOST}" != "127.0.0.1" ] && [ "${WINGS_SFTP_HOST}" != "localhost" ]; then
+  open_ports+=("${WINGS_SFTP_PORT}/tcp")  # per-container SFTP
+fi
+
+open_firewall() {
+  if [ "${WINGS_NO_FIREWALL}" = "1" ] || [ "${#open_ports[@]}" -eq 0 ]; then
+    return 0
+  fi
+  echo "==> opening firewall ports: ${open_ports[*]}"
+  if have ufw; then
+    if command -v ufw >/dev/null 2>&1; then
+      ufw allow "${open_ports[@]}" 2>/dev/null && return 0
+    fi
+  fi
+  if have firewall-cmd; then
+    local port
+    for port in "${open_ports[@]}"; do
+      firewall-cmd --permanent --add-port="${port}" 2>/dev/null || true
+    done
+    firewall-cmd --reload 2>/dev/null || true
+    return 0
+  fi
+  if have iptables; then
+    local port
+    for port in "${open_ports[@]}"; do
+      iptables -I INPUT -p "${port#*/}" --dport "${port%/*}" -j ACCEPT 2>/dev/null || true
+    done
+    return 0
+  fi
+  echo "    warning: no ufw/firewalld/iptables found — open ports manually:"
+  echo "    ${open_ports[*]}"
+}
+open_firewall || true
+
+# ------------------------------------------------------------
+# 6. verify the binary
 # ------------------------------------------------------------
 echo "==> verifying binary"
 if "${BIN_DIR}/cardinal-wings" --help >/dev/null 2>&1 || "${BIN_DIR}/cardinal-wings" --version >/dev/null 2>&1; then
@@ -247,19 +299,37 @@ else
   fi
 fi
 
+# ------------------------------------------------------------
+# 7. start / restart the service
+# ------------------------------------------------------------
+systemctl enable cardinal-wings 2>/dev/null || true
+if systemctl is-active --quiet cardinal-wings 2>/dev/null; then
+  # Already running (e.g. an upgrade): restart so the new binary takes effect.
+  systemctl restart cardinal-wings 2>/dev/null && echo "==> cardinal-wings restarted with the new binary"
+else
+  systemctl start cardinal-wings 2>/dev/null && echo "==> cardinal-wings started and enabled for next boot"
+fi
+
 echo
 echo "cardinal-wings installed: ${BIN_DIR}/cardinal-wings"
 echo
 echo "Next steps:"
-echo "  1. systemctl enable --now cardinal-wings"
-echo "  2. systemctl enable --now cardinal-bootstrap"
-echo "  3. systemctl status cardinal-wings          # should be active (running)"
-echo "  4. systemctl status cardinal-bootstrap      # boot recovery supervisor"
-echo "  5. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
-echo "  6. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
+echo "  1. systemctl status cardinal-wings          # should be active (running)"
+echo "  2. systemctl status cardinal-bootstrap      # boot recovery supervisor"
+echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
+echo "  4. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
 echo "     and paste the API key from ${CONF_DIR}/config.toml"
 echo
+echo "Open ports (already added to the firewall):"
+echo "  ${WINGS_PORT}/tcp  — wings API"
+if [ "${WINGS_SFTP}" = "1" ]; then
+  echo "  ${WINGS_SFTP_PORT}/tcp — per-container SFTP (Filezilla/WinSCP)"
+fi
+echo
 if [ "${WINGS_HOST}" = "127.0.0.1" ]; then
-  echo "NOTE: bound to loopback -- only the local panel can reach it."
+  echo "NOTE: wings API bound to loopback -- only the local panel can reach it."
   echo "      For a remote panel re-run with WINGS_HOST=0.0.0.0 (TLS recommended)."
+fi
+if [ "${WINGS_SFTP}" = "1" ] && [ "${WINGS_SFTP_HOST}" != "0.0.0.0" ] && [ "${WINGS_SFTP_HOST}" != "::" ]; then
+  echo "NOTE: SFTP bound to ${WINGS_SFTP_HOST} -- clients must reach this address on port ${WINGS_SFTP_PORT}."
 fi

@@ -17,9 +17,9 @@
 package server
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
