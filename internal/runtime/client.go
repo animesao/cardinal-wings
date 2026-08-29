@@ -66,6 +66,18 @@ func (c *Client) do(ctx context.Context, method, path string, body interface{}, 
 	return nil
 }
 
+// UpdateContainer applies runtime settings (resources, startup script) to an
+// existing container through cardinal's /update endpoint. Memory/CPU changes
+// are applied to the container's cgroup live; disk changes are persisted and
+// take effect on the next restart. Returns cardinal's response.
+func (c *Client) UpdateContainer(ctx context.Context, ref string, req map[string]interface{}) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, "POST", "/containers/"+ref+"/update", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Ping returns nil when the cardinal host responds.
 func (c *Client) Ping(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/_ping", nil)

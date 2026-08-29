@@ -156,7 +156,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp", "limits":
 		return true
 	case "sftp":
 		return method != http.MethodGet
@@ -202,6 +202,43 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, res)
 }
 
+// handleContainerLimits changes a container's memory/CPU/disk limits in place
+// (no recreate, no data snapshot). Memory and CPU are applied to the container's
+// cgroup live by cardinal; disk is persisted and applied on the next restart.
+func handleContainerLimits(w http.ResponseWriter, r *http.Request, ref string, c *runtime.Client) {
+	var req struct {
+		MemoryBytes *int64   `json:"memory_bytes"`
+		CPUs        *float64 `json:"cpus"`
+		DiskBytes   *int64   `json:"disk_bytes"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid limits JSON: "+err.Error())
+		return
+	}
+
+	payload := map[string]interface{}{}
+	if req.MemoryBytes != nil {
+		payload["memory_bytes"] = *req.MemoryBytes
+	}
+	if req.CPUs != nil {
+		payload["cpus"] = *req.CPUs
+	}
+	if req.DiskBytes != nil {
+		payload["disk_bytes"] = *req.DiskBytes
+	}
+	if len(payload) == 0 {
+		writeError(w, http.StatusBadRequest, "no limits supplied")
+		return
+	}
+
+	res, err := c.UpdateContainer(r.Context(), ref, payload)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, ErrInternal, "update limits %s: %s", ref, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
 func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 	c, ok := clientFor(w, r)
 	if !ok {
@@ -239,6 +276,9 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "backup" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
 		handleContainerBackup(w, r, ref)
+
+	case action == "limits" && r.Method == http.MethodPost:
+		handleContainerLimits(w, r, ref, c)
 
 	case action == "exec" && r.Method == http.MethodPost:
 		handleContainerExec(w, r, ref, c)
