@@ -68,6 +68,12 @@ func Run(cfg *config.Config) error {
 	// Webhook notifications (task completion etc).
 	initWebhooks(cfg)
 
+	// Per-container SFTP (SSH) server — the panel generates credentials and
+	// users connect straight to the container data dir with Filezilla/WinSCP.
+	if err := startSFTPServer(cfg); err != nil {
+		logf("!! sftp server disabled: %v", err)
+	}
+
 	mw := auth.New(cfg)
 
 	// Public (no auth): liveness and health checks for load balancers and
@@ -83,6 +89,7 @@ func Run(cfg *config.Config) error {
 	api.HandleFunc("/v1/self", handleSelf)
 	api.HandleFunc("/v1/metrics", handleMetrics)
 	api.HandleFunc("/v1/events", handleEvents)
+	api.HandleFunc("/v1/sftp/info", handleSftpInfo)
 	tasksRoutes(api)
 	containerRoutes(api, mw)
 	imageRoutes(api, mw)

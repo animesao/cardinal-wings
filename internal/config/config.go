@@ -36,7 +36,7 @@ type Node struct {
 	Enabled bool   `toml:"enabled"`
 }
 
-// Server holds the HTTP bind, TLS and timeout settings.
+// Server holds the HTTP bind, TLS, timeout and SFTP settings.
 type Server struct {
 	Host         string `toml:"host"`
 	Port         int    `toml:"port"`
@@ -45,6 +45,14 @@ type Server struct {
 	ReadTimeout  int    `toml:"read_timeout_seconds"`
 	WriteTimeout int    `toml:"write_timeout_seconds"`
 	IdleTimeout  int    `toml:"idle_timeout_seconds"`
+
+	// SFTP (SSH) listener served by wings so panels can offer per-container
+	// file access over SFTP without an sshd inside each image. The panel
+	// generates a username/password per container; wings jails every session
+	// to that container's data directory on the host filesystem.
+	SFTPEnabled bool   `toml:"sftp_enabled"`
+	SFTPHost    string `toml:"sftp_host"`
+	SFTPPort    int    `toml:"sftp_port"`
 }
 
 // RateLimit holds the per-IP and per-key token bucket settings.
@@ -82,7 +90,13 @@ type Config struct {
 // Default returns a config that refuses to serve anything useful until edited.
 func Default() *Config {
 	return &Config{
-		Server: Server{Host: "127.0.0.1", Port: 8080},
+		Server: Server{
+			Host:        "127.0.0.1",
+			Port:        8080,
+			SFTPEnabled: true,
+			SFTPHost:    "0.0.0.0",
+			SFTPPort:    2022,
+		},
 		Keys:   []APIKey{},
 		Nodes:  []Node{},
 		Remote: Remote{MetricsRequiresAuth: true},
@@ -147,6 +161,14 @@ func Load(path string) (*Config, error) {
 			case "idle_timeout_seconds":
 				if v, err := strconv.Atoi(value); err == nil {
 					cfg.Server.IdleTimeout = v
+				}
+			case "sftp_enabled":
+				cfg.Server.SFTPEnabled = value == "true"
+			case "sftp_host":
+				cfg.Server.SFTPHost = unquote(value)
+			case "sftp_port":
+				if p, err := strconv.Atoi(value); err == nil {
+					cfg.Server.SFTPPort = p
 				}
 			}
 		case "rate_limit":
@@ -304,6 +326,9 @@ func (c *Config) consumeNode(key, value string) {
 func (c *Config) Validate() error {
 	if c.Server.Port < 1 || c.Server.Port > 65535 {
 		return fmt.Errorf("server.port %d out of range", c.Server.Port)
+	}
+	if c.Server.SFTPPort < 1 || c.Server.SFTPPort > 65535 {
+		return fmt.Errorf("server.sftp_port %d out of range", c.Server.SFTPPort)
 	}
 	for _, k := range c.Keys {
 		if k.Key == "" {

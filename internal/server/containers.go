@@ -158,6 +158,8 @@ func isMutating(action, method string) bool {
 	switch action {
 	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp":
 		return true
+	case "sftp":
+		return method != http.MethodGet
 	}
 	// Backup restore (POST) uploads an archive into the container — mutating.
 	// Backup download (GET) is a read, same as fm/download.
@@ -258,6 +260,15 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case strings.HasPrefix(action, "fs/") && r.Method == http.MethodGet:
 		handleFs(w, r)
+
+	case action == "sftp" && r.Method == http.MethodGet:
+		handleSftpStatus(w, r, ref)
+
+	case action == "sftp" && r.Method == http.MethodPut:
+		handleSftpSet(w, r, ref)
+
+	case action == "sftp" && r.Method == http.MethodDelete:
+		handleSftpDelete(w, r, ref)
 
 	case strings.HasPrefix(action, "fm/"):
 		handleFm(w, r, ref)

@@ -9,6 +9,13 @@ port = 8080
 # tls_cert = "/etc/cardinal-wings/server.crt"
 # tls_key  = "/etc/cardinal-wings/server.key"
 
+# Per-container SFTP (SSH). The panel assigns a username/password per server
+# and users connect straight to the container data directory with any SFTP
+# client (Filezilla, WinSCP, …). Sessions are jailed to the container data.
+sftp_enabled = true
+sftp_host = "0.0.0.0"    # bind SFTP on all interfaces so clients can reach it
+sftp_port = 2022
+
 # Panel credentials. role is "readonly" or "admin".
 [[keys]]
 name = "main"

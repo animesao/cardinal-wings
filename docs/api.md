@@ -80,6 +80,46 @@ curl -N -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/jso
   localhost:8080/v1/containers/<id>/exec/stream
 ```
 
+## SFTP
+
+Wings runs an embedded SSH/SFTP server (default port `2022`, config:
+`[server] sftp_enabled / sftp_host / sftp_port`). The panel assigns a
+username/password per container; every SFTP session is jailed to that
+container's data directory on the host (`merged/data` or
+`merged/home/container`), so users can connect with any SFTP client
+(Filezilla, WinSCP, …) directly to the container. When the overlay is not
+mounted (e.g. after a host reboot), wings temporarily starts the container
+for the session and stops it again afterwards.
+
+```bash
+# SFTP listener info
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/sftp/info
+# → {"enabled":true,"host":"0.0.0.0","port":2022}
+
+# Set / update a container's SFTP credential (admin)
+curl -X PUT -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"username":"srv-abc123","password":"generated-password"}' \
+  localhost:8080/v1/containers/<id>/sftp
+# → {"ok":true,"username":"srv-abc123","port":2022}
+
+# SFTP status for a container
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/sftp
+# → {"enabled":true,"username":"srv-abc123"}
+
+# Remove a container's SFTP credential (admin)
+curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/sftp
+```
+
+Client connection (same address any SFTP client uses):
+
+```text
+sftp://<node-host>:2022   user: <username>   pass: <generated-password>
+```
+
+The SSH host key is persisted at `$WINGS_DATA_DIR/sftp_host_key` (generated
+on first start); credentials live in `$WINGS_DATA_DIR/sftp-users.json`
+(bcrypt-hashed).
+
 ## Images
 
 ```bash
