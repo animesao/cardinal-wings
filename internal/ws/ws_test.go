@@ -3,13 +3,15 @@ package ws
 import (
 	"bufio"
 	"bytes"
+	"fmt"
+	"strings"
 	"testing"
 )
 
 func TestFrameRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
-	if err := writeFrame(w, 0x1, []byte("hello")); err != nil {
+	if err := writeMaskedFrame(w, 0x1, []byte("hello")); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Flush(); err != nil {
@@ -53,12 +55,57 @@ func TestMaskedFrame(t *testing.T) {
 	}
 }
 
+func writeMaskedFrame(w *bufio.Writer, opcode byte, payload []byte) error {
+	mask := []byte{1, 2, 3, 4}
+	frame := []byte{0x80 | opcode}
+	if len(payload) <= 125 {
+		frame = append(frame, 0x80|byte(len(payload)))
+	} else if len(payload) <= 0xffff {
+		frame = append(frame, 0x80|126, byte(len(payload)>>8), byte(len(payload)))
+	} else {
+		return fmt.Errorf("test payload too large")
+	}
+	frame = append(frame, mask...)
+	for i, b := range payload {
+		frame = append(frame, b^mask[i%4])
+	}
+	_, err := w.Write(frame)
+	return err
+}
+
+func TestRSVFrameRejected(t *testing.T) {
+	frame := []byte{0xC1, 0x81, 1, 2, 3, 4, 'x' ^ 1}
+	_, _, _, err := readFrame(bufio.NewReader(bytes.NewReader(frame)))
+	if err == nil || !strings.Contains(err.Error(), "extensions") {
+		t.Fatalf("expected RSV rejection, got %v", err)
+	}
+}
+
+func TestUnmaskedFrameRejected(t *testing.T) {
+	frame := []byte{0x81, 0x03, 'a', 'b', 'c'}
+	_, _, _, err := readFrame(bufio.NewReader(bytes.NewReader(frame)))
+	if err == nil || !strings.Contains(err.Error(), "masked") {
+		t.Fatalf("expected unmasked frame rejection, got %v", err)
+	}
+}
+
+func TestFragmentedFrameRejected(t *testing.T) {
+	frame := []byte{0x01, 0x81, 1, 2, 3, 4, 'x' ^ 1}
+	fin, _, _, err := readFrame(bufio.NewReader(bytes.NewReader(frame)))
+	if !fin {
+		err = fmt.Errorf("fragmented frames are not supported")
+	}
+	if err == nil || !strings.Contains(err.Error(), "fragmented") {
+		t.Fatalf("expected fragmented frame rejection, got %v", err)
+	}
+}
+
 func TestLargeFrameHeader(t *testing.T) {
 	// 16-bit length path.
 	var buf bytes.Buffer
 	w := bufio.NewWriter(&buf)
 	data := bytes.Repeat([]byte("x"), 300)
-	if err := writeFrame(w, 0x1, data); err != nil {
+	if err := writeMaskedFrame(w, 0x1, data); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Flush(); err != nil {

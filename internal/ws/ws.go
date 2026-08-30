@@ -76,9 +76,14 @@ func (c *Conn) ReadText() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = fin
 	if opcode == 0x8 { // close
 		return nil, io.EOF
+	}
+	if opcode == 0x9 || opcode == 0xA { // ping/pong are handled by the caller
+		return payload, nil
+	}
+	if !fin {
+		return nil, errors.New("fragmented frames are not supported")
 	}
 	if opcode != 0x1 && opcode != 0x2 { // text or binary — panels may send either
 		return nil, fmt.Errorf("unexpected opcode %d", opcode)
@@ -116,8 +121,15 @@ func readFrame(r *bufio.Reader) (fin bool, opcode byte, payload []byte, err erro
 		return
 	}
 	fin = b[0]&0x80 != 0
+	rsv := b[0] & 0x70
 	opcode = b[0] & 0x0f
+	if rsv != 0 {
+		return false, 0, nil, errors.New("unsupported websocket extensions")
+	}
 	masked := b[1]&0x80 != 0
+	if !masked {
+		return false, 0, nil, errors.New("client frame is not masked")
+	}
 	length := uint64(b[1] & 0x7f)
 
 	switch {
@@ -136,6 +148,9 @@ func readFrame(r *bufio.Reader) (fin bool, opcode byte, payload []byte, err erro
 	}
 	if length > 4<<20 {
 		return false, 0, nil, errors.New("frame too large")
+	}
+	if opcode >= 0x8 && (!fin || length > 125) {
+		return false, 0, nil, errors.New("invalid control frame")
 	}
 
 	var mask [4]byte

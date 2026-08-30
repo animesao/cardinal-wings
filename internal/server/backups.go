@@ -12,6 +12,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -139,6 +140,14 @@ func streamBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 // falls back to tar inside the container when the overlay isn't mounted.
 func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 	clean := r.URL.Query().Get("clean") == "1"
+	if r.ContentLength > 20<<30 {
+		writeError(w, http.StatusRequestEntityTooLarge, "backup exceeds 20 GiB limit")
+		return
+	}
+	if root == "/" || filepath.Clean(root) == "/" {
+		writeError(w, http.StatusBadRequest, "invalid restore root")
+		return
+	}
 
 	// Host path restore — robust for images whose entrypoint is not a shell.
 	if hostRoot, herr := hostDataRoot(ref); herr == nil && hostRoot != "/" {
@@ -160,8 +169,8 @@ func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 			}
 		}
 
-		cmd := exec.Command("tar", "xzf", "-", "-C", hostRoot)
-		cmd.Stdin = r.Body
+		cmd := exec.Command("tar", "xzf", "-", "-C", hostRoot, "--no-absolute-names", "--no-same-owner")
+		cmd.Stdin = io.LimitReader(r.Body, 20<<30)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr
 		if err := cmd.Run(); err != nil {
