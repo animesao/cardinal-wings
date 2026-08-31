@@ -68,8 +68,10 @@ download() {
   local tmp="${dest}.tmp.$$"
   local try
   for try in 1 2 3; do
-    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 300 \
-         "${url}" -o "${tmp}"; then
+    # Try normally first, then force IPv4 — some networks black-hole IPv6 and
+    # stall transfers without any error (the classic "installer hangs" case).
+    if curl -fsSL --retry 2 --connect-timeout 15 --max-time 300 "${url}" -o "${tmp}" \
+         || curl -4 -fsSL --retry 2 --connect-timeout 15 --max-time 300 "${url}" -o "${tmp}"; then
       if [ -s "${tmp}" ]; then
         mv -f "${tmp}" "${dest}"
         return 0
@@ -120,7 +122,7 @@ else
   MIRROR_VER=""
   if [ "${VERSION}" = "latest" ]; then
     if [ -n "${WINGS_MIRROR}" ]; then
-      MIRROR_VER="$(curl -fsSL --retry 2 --connect-timeout 12 "${WINGS_MIRROR}/VERSION" 2>/dev/null | tail -1 | tr -d '[:space:]')"
+      MIRROR_VER="$(curl -fsSL --retry 2 --connect-timeout 12 --max-time 25 "${WINGS_MIRROR}/VERSION" 2>/dev/null | tail -1 | tr -d '[:space:]')"
       if [ -n "${MIRROR_VER}" ] && printf '%s' "${MIRROR_VER}" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
         VERSION="v${MIRROR_VER#v}"
         echo "==> latest release (mirror): ${VERSION}"
@@ -132,7 +134,7 @@ else
     if [ -z "${MIRROR_VER}" ]; then
       echo "==> resolving latest release"
       TMP_TAG="/tmp/cardinal-wings.latest.json"
-      if ! curl -fsSL --retry 3 --connect-timeout 10 -o "${TMP_TAG}" \
+      if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 25 -o "${TMP_TAG}" \
         "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"; then
         echo "error: could not fetch latest release info" >&2
         exit 1
@@ -181,7 +183,7 @@ else
   if [ "${WINGS_SKIP_VERIFY}" != "1" ] && [ -n "${WINGS_MIRROR}" ]; then
     TMP_SUMS="/tmp/cardinal-wings.sha256"
     rm -f "${TMP_SUMS}"
-    if curl -fsSL --retry 2 --connect-timeout 10 "${WINGS_MIRROR}/${VERSION}/SHA256SUMS" -o "${TMP_SUMS}" 2>/dev/null; then
+    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 25 "${WINGS_MIRROR}/${VERSION}/SHA256SUMS" -o "${TMP_SUMS}" 2>/dev/null; then
       expected="$(grep "  ${ASSET}$" "${TMP_SUMS}" | awk '{print $1}' || true)"
       if [ -n "${expected}" ]; then
         actual="$(sha256sum "${BIN_DIR}/cardinal-wings" | awk '{print $1}')"
