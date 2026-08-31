@@ -399,15 +399,41 @@ echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
 # ------------------------------------------------------------
 SCHEME="http"
 [ "${WINGS_TLS}" = "1" ] && SCHEME="https"
-IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+
+# Внешний (публичный) IP ноды, а не loopback.
+external_ip() {
+  local ip url
+  for url in "https://api.ipify.org" "https://ifconfig.me/ip" "https://icanhazip.com"; do
+    ip="$(curl -fsSL --connect-timeout 5 --max-time 10 "$url" 2>/dev/null | tr -d '[:space:]')"
+    if [ -n "$ip" ] && printf '%s' "$ip" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+      echo "$ip"; return 0
+    fi
+  done
+  hostname -I 2>/dev/null | tr ' ' '\n' | grep -vE '^(127\.|::)' | head -1
+}
+EXT_IP="$(external_ip || true)"
+LOCAL_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+LOOPBACK_NOTE=0
 case "${WINGS_HOST}" in
-  127.0.0.1|localhost|::1|"") BIND_URL="${SCHEME}://127.0.0.1:${WINGS_PORT}" ;;
-  0.0.0.0|"::")              BIND_URL="${SCHEME}://${IP:-<this-machine-ip>}:${WINGS_PORT}" ;;
-  *)                          BIND_URL="${SCHEME}://${WINGS_HOST}:${WINGS_PORT}" ;;
+  127.0.0.1|localhost|::1|"")
+    BIND_URL="${SCHEME}://${EXT_IP:-127.0.0.1}:${WINGS_PORT}"      # отображаемое: внешний IP
+    LOOPBACK_NOTE=1 ;;
+  0.0.0.0|"::")
+    BIND_URL="${SCHEME}://${EXT_IP:-$LOCAL_IP}:${WINGS_PORT}" ;;
+  *)
+    BIND_URL="${SCHEME}://${WINGS_HOST}:${WINGS_PORT}" ;;
 esac
 API_KEY="${API_KEY:-}"
 if [ -z "${API_KEY}" ] && [ -f "${CONF_DIR}/config.toml" ]; then
   API_KEY="$(sed -n 's/^key *= *"\([^"]*\)".*/\1/p' "${CONF_DIR}/config.toml" | head -1)"
+fi
+
+# Проверка связи с внешним IP (best-effort; ICMP может быть закрыт).
+PING_NOTE=""
+if [ -n "${EXT_IP}" ] && command -v ping >/dev/null 2>&1; then
+  ping_msg="нет ответа (ICMP может быть закрыт)"
+  ping -c1 -W2 "${EXT_IP}" >/dev/null 2>&1 && ping_msg="OK (пингуется)"
+  PING_NOTE="   Ping : ${ping_msg}"
 fi
 
 echo
@@ -416,9 +442,17 @@ echo "   PANEL BINDING  —  впиши эти данные в форму \"New 
 echo "   ------------------------------------------------------------"
 echo "   URL   : ${BIND_URL}"
 echo "   Token : ${API_KEY:-<read from ${CONF_DIR}/config.toml>}"
+[ -n "${PING_NOTE}" ] && echo "${PING_NOTE}"
 echo "  ------------------------------------------------------------"
 echo "   Панель → Admin → Nodes → Add node → URL + Token."
 echo "  ============================================================"
+if [ "${LOOPBACK_NOTE}" = "1" ]; then
+  echo
+  echo "NOTE: wings слушает только loopback (${WINGS_HOST}) — для внешней панели"
+  echo "      переустанови с WINGS_HOST=0.0.0.0 (рекомендуется TLS). URL выше —"
+  echo "      внешний IP ноды, но этот адрес откроется только когда wings будет"
+  echo "      слушать не только 127.0.0.1."
+fi
 echo
 echo "Open ports (already added to the firewall):"
 echo "  ${WINGS_PORT}/tcp  — wings API"
