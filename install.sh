@@ -25,6 +25,9 @@
 #   WINGS_SFTP_HOST= bind address for SFTP (default 0.0.0.0)
 #   WINGS_SFTP_PORT= SFTP listen port (default 2022)
 #   WINGS_NO_FIREWALL=1  skip automatic firewall port opening
+#   WINGS_MIRROR=...    mirror base for binaries (default https://cardinal.spcfy.eu/downloads/wings;
+#                       set WINGS_MIRROR="" to force GitHub-only)
+#   WINGS_SKIP_VERIFY=1 disable SHA256 verification against the mirror
 # ============================================================
 set -euo pipefail
 
@@ -45,6 +48,8 @@ WINGS_SFTP="${WINGS_SFTP:-1}"
 WINGS_SFTP_HOST="${WINGS_SFTP_HOST:-0.0.0.0}"
 WINGS_SFTP_PORT="${WINGS_SFTP_PORT:-2022}"
 WINGS_NO_FIREWALL="${WINGS_NO_FIREWALL:-0}"
+WINGS_MIRROR="${WINGS_MIRROR:-https://cardinal.spcfy.eu/downloads/wings}"
+WINGS_SKIP_VERIFY="${WINGS_SKIP_VERIFY:-0}"
 
 # ------------------------------------------------------------
 # helpers
@@ -111,40 +116,85 @@ if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
     -ldflags="-s -w -X github.com/animesao/cardinal-wings/internal/server.version=dev" \
     -o "${BIN_DIR}/cardinal-wings" .
 else
+  # Resolve the version: prefer the site mirror, fall back to the GitHub API.
+  MIRROR_VER=""
   if [ "${VERSION}" = "latest" ]; then
-    echo "==> resolving latest release"
-    TMP_TAG="/tmp/cardinal-wings.latest.json"
-    if ! curl -fsSL --retry 3 --connect-timeout 10 -o "${TMP_TAG}" \
-      "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"; then
-      echo "error: could not fetch latest release info" >&2
-      exit 1
+    if [ -n "${WINGS_MIRROR}" ]; then
+      MIRROR_VER="$(curl -fsSL --retry 2 --connect-timeout 12 "${WINGS_MIRROR}/VERSION" 2>/dev/null | tail -1 | tr -d '[:space:]')"
+      if [ -n "${MIRROR_VER}" ] && printf '%s' "${MIRROR_VER}" | grep -qE '^v?[0-9]+\.[0-9]+\.[0-9]+$'; then
+        VERSION="v${MIRROR_VER#v}"
+        echo "==> latest release (mirror): ${VERSION}"
+      else
+        MIRROR_VER=""
+        echo "==> mirror has no version (${WINGS_MIRROR}) — resolving via GitHub API"
+      fi
     fi
-    tagline="$(grep -m1 '"tag_name"' "${TMP_TAG}" 2>/dev/null || true)"
-    for cand in \
-      "$(printf '%s' "${tagline}" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')" \
-      "$(printf '%s' "${tagline}" | grep -o '"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"' | tr -d '"')"
-    do
-      [ -n "${cand}" ] && VERSION="v${cand#v}" && break
-    done
-    rm -f "${TMP_TAG}"
-    if [ -z "${VERSION}" ] || ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
-      echo "error: could not resolve a valid latest release tag (got '${VERSION}')" >&2
-      exit 1
+    if [ -z "${MIRROR_VER}" ]; then
+      echo "==> resolving latest release"
+      TMP_TAG="/tmp/cardinal-wings.latest.json"
+      if ! curl -fsSL --retry 3 --connect-timeout 10 -o "${TMP_TAG}" \
+        "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"; then
+        echo "error: could not fetch latest release info" >&2
+        exit 1
+      fi
+      tagline="$(grep -m1 '"tag_name"' "${TMP_TAG}" 2>/dev/null || true)"
+      for cand in \
+        "$(printf '%s' "${tagline}" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')" \
+        "$(printf '%s' "${tagline}" | grep -o '"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*"' | tr -d '"')"
+      do
+        [ -n "${cand}" ] && VERSION="v${cand#v}" && break
+      done
+      rm -f "${TMP_TAG}"
+      if [ -z "${VERSION}" ] || ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+        echo "error: could not resolve a valid latest release tag (got '${VERSION}')" >&2
+        exit 1
+      fi
     fi
   elif ! printf '%s' "${VERSION}" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
     echo "error: invalid version '${VERSION}' (expected e.g. v0.4.4)" >&2
     exit 1
   fi
-  url="https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}"
-  echo "==> downloading ${VERSION} (${ASSET})"
-  if ! download "${url}" "${BIN_DIR}/cardinal-wings"; then
-    echo "" >&2
-    echo "Tip: try downloading the script first then running it:" >&2
-    echo "  curl -fsSL ${RAW}/install.sh -o /tmp/install-wings.sh" >&2
-    echo "  sudo bash /tmp/install-wings.sh" >&2
-    exit 1
+
+  # Download the binary — try the site mirror first, then GitHub.
+  dl_ok=0
+  if [ -n "${WINGS_MIRROR}" ]; then
+    echo "==> downloading ${VERSION} (${ASSET}) from mirror"
+    if download "${WINGS_MIRROR}/${VERSION}/${ASSET}" "${BIN_DIR}/cardinal-wings"; then
+      dl_ok=1
+    else
+      echo "    mirror unavailable — falling back to GitHub"
+    fi
+  fi
+  if [ "${dl_ok}" = "0" ]; then
+    echo "==> downloading ${VERSION} (${ASSET}) from GitHub"
+    if ! download "https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}" "${BIN_DIR}/cardinal-wings"; then
+      echo "" >&2
+      echo "Tip: try downloading the script first then running it:" >&2
+      echo "  curl -fsSL ${RAW}/install.sh -o /tmp/install-wings.sh" >&2
+      echo "  sudo bash /tmp/install-wings.sh" >&2
+      exit 1
+    fi
   fi
   chmod +x "${BIN_DIR}/cardinal-wings"
+
+  # Verify against the mirror's SHA256SUMS when available.
+  if [ "${WINGS_SKIP_VERIFY}" != "1" ] && [ -n "${WINGS_MIRROR}" ]; then
+    TMP_SUMS="/tmp/cardinal-wings.sha256"
+    rm -f "${TMP_SUMS}"
+    if curl -fsSL --retry 2 --connect-timeout 10 "${WINGS_MIRROR}/${VERSION}/SHA256SUMS" -o "${TMP_SUMS}" 2>/dev/null; then
+      expected="$(grep "  ${ASSET}$" "${TMP_SUMS}" | awk '{print $1}' || true)"
+      if [ -n "${expected}" ]; then
+        actual="$(sha256sum "${BIN_DIR}/cardinal-wings" | awk '{print $1}')"
+        if [ "${actual}" != "${expected}" ]; then
+          echo "error: SHA256 mismatch for ${ASSET}" >&2
+          rm -f "${BIN_DIR}/cardinal-wings" "${TMP_SUMS}"
+          exit 1
+        fi
+        echo "==> SHA256 verified (${expected:0:16}…)"
+      fi
+    fi
+    rm -f "${TMP_SUMS}"
+  fi
 fi
 
 # ------------------------------------------------------------
@@ -317,8 +367,32 @@ echo "Next steps:"
 echo "  1. systemctl status cardinal-wings          # should be active (running)"
 echo "  2. systemctl status cardinal-bootstrap      # boot recovery supervisor"
 echo "  3. curl -s localhost:${WINGS_PORT}/v1/ping   # should print pong"
-echo "  4. add the node to the panel: host=$(hostname -I 2>/dev/null | awk '{print $1}'), port=${WINGS_PORT}"
-echo "     and paste the API key from ${CONF_DIR}/config.toml"
+
+# ------------------------------------------------------------
+# Panel binding summary
+# ------------------------------------------------------------
+SCHEME="http"
+[ "${WINGS_TLS}" = "1" ] && SCHEME="https"
+IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+case "${WINGS_HOST}" in
+  127.0.0.1|localhost|::1|"") BIND_URL="${SCHEME}://127.0.0.1:${WINGS_PORT}" ;;
+  0.0.0.0|"::")              BIND_URL="${SCHEME}://${IP:-<this-machine-ip>}:${WINGS_PORT}" ;;
+  *)                          BIND_URL="${SCHEME}://${WINGS_HOST}:${WINGS_PORT}" ;;
+esac
+API_KEY="${API_KEY:-}"
+if [ -z "${API_KEY}" ] && [ -f "${CONF_DIR}/config.toml" ]; then
+  API_KEY="$(sed -n 's/^key *= *"\([^"]*\)".*/\1/p' "${CONF_DIR}/config.toml" | head -1)"
+fi
+
+echo
+echo "  ============================================================"
+echo "   PANEL BINDING  —  впиши эти данные в форму \"New node\" панели"
+echo "   ------------------------------------------------------------"
+echo "   URL   : ${BIND_URL}"
+echo "   Token : ${API_KEY:-<read from ${CONF_DIR}/config.toml>}"
+echo "  ------------------------------------------------------------"
+echo "   Панель → Admin → Nodes → Add node → URL + Token."
+echo "  ============================================================"
 echo
 echo "Open ports (already added to the firewall):"
 echo "  ${WINGS_PORT}/tcp  — wings API"
@@ -329,6 +403,8 @@ echo
 if [ "${WINGS_HOST}" = "127.0.0.1" ]; then
   echo "NOTE: wings API bound to loopback -- only the local panel can reach it."
   echo "      For a remote panel re-run with WINGS_HOST=0.0.0.0 (TLS recommended)."
+else
+  echo "NOTE: wings API is bound to ${WINGS_HOST} -- make sure the panel can reach ${BIND_URL}."
 fi
 if [ "${WINGS_SFTP}" = "1" ] && [ "${WINGS_SFTP_HOST}" != "0.0.0.0" ] && [ "${WINGS_SFTP_HOST}" != "::" ]; then
   echo "NOTE: SFTP bound to ${WINGS_SFTP_HOST} -- clients must reach this address on port ${WINGS_SFTP_PORT}."

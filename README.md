@@ -120,11 +120,27 @@ tagged build. CI attaches per-platform binaries + checksums + the installer.
 Install the latest release:
 
 ```bash
-curl -fsSL https://github.com/animesao/cardinal-wings/releases/latest/download/install.sh | bash
+# recommended — installer + binary come from the site mirror (no GitHub needed)
+curl -fsSL https://cardinal.spcfy.eu/downloads/install-wings.sh -o /tmp/install-wings.sh
+sudo bash /tmp/install-wings.sh
+
+# or straight from GitHub Releases
+curl -fsSL https://github.com/animesao/cardinal-wings/releases/latest/download/install.sh -o /tmp/install-wings.sh
+sudo bash /tmp/install-wings.sh
 ```
 
 Or a specific version: `./install.sh v0.1.0` (from a clone), or build locally
 with `./install.sh local`.
+
+At the end the installer prints a **panel binding** block with the node
+`URL` (`http(s)://<ip>:<port>`) and the generated API `Token` — paste those two
+values into the panel's *Admin → Nodes → Add node* form.
+
+> **GitHub blocked/slow in your region?** The installer downloads the binary from
+> a site mirror (`cardinal.spcfy.eu`) first and falls back to GitHub, so a
+> `curl: (28) SSL connection timeout` no longer blocks installation. Pin the
+> mirror explicitly with `WINGS_MIRROR=...`, or force GitHub-only with
+> `WINGS_MIRROR=""`.
 
 ## Roadmap
 
