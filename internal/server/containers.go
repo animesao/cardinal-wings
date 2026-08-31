@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/animesao/cardinal-wings/internal/auth"
 	"github.com/animesao/cardinal-wings/internal/runtime"
@@ -239,6 +240,44 @@ func handleContainerLimits(w http.ResponseWriter, r *http.Request, ref string, c
 	writeJSON(w, http.StatusOK, res)
 }
 
+type cpuSample struct {
+	usage     float64
+	timestamp float64
+}
+
+var cpuSamples = struct {
+	sync.Mutex
+	values map[string]cpuSample
+}{values: make(map[string]cpuSample)}
+
+// addCPUPercent calculates the native cardinal CPU counter delta once per
+// container. cardinal reports usage in microseconds and timestamp in ns.
+func addCPUPercent(ref string, stats map[string]interface{}) {
+	usage, usageOK := stats["cpu_usage_usec"].(float64)
+	timestamp, timestampOK := stats["timestamp"].(float64)
+	if !usageOK || !timestampOK || usage < 0 || timestamp <= 0 {
+		return
+	}
+
+	cpuSamples.Lock()
+	defer cpuSamples.Unlock()
+	previous, ok := cpuSamples.values[ref]
+	cpuSamples.values[ref] = cpuSample{usage: usage, timestamp: timestamp}
+	if !ok || timestamp <= previous.timestamp || usage < previous.usage {
+		stats["cpu_percent"] = float64(0)
+		return
+	}
+
+	percent := (usage - previous.usage) * 100000 / (timestamp - previous.timestamp)
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 9999 {
+		percent = 9999
+	}
+	stats["cpu_percent"] = percent
+}
+
 func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 	c, ok := clientFor(w, r)
 	if !ok {
@@ -264,11 +303,12 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 			handleContainerStatsStream(w, r, ref, c)
 			return
 		}
-		var s interface{}
+		var s map[string]interface{}
 		if err := c.Stats(r.Context(), ref, &s); err != nil {
 			writeErr(w, http.StatusNotFound, ErrNotFound, "stats %s: %s", ref, err.Error())
 			return
 		}
+		addCPUPercent(ref, s)
 		writeJSON(w, http.StatusOK, s)
 
 	case action == "logs" && r.Method == http.MethodGet:
