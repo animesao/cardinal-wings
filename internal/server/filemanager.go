@@ -58,7 +58,7 @@ var fmMountMu sync.Mutex
 // Kept for compatibility with the existing script parser tests. The live
 // file-manager path no longer executes this script; it uses host filesystem
 // operations instead.
-const fmListScript = `P=%s; cd -- "$P" 2>/dev/null || { echo "__ERR__no such dir"; exit 1; }; for f in "$P"/.[!.]* "$P"/*; do [ -e "$f" ] || continue; if [ -d "$f" ]; then echo -n d; printf '\\t0'; else s=$(wc -c < "$f" 2>/dev/null || echo 0); echo -n f; printf '\\t%%s' "$s"; fi; m=$(stat -c %%Y "$f" 2>/dev/null || echo 0); n=$(printf '%%s' "${f##*/}" | base64 | tr -d '\\n'); printf '\\t%%s\\t%%s\\n' "$m" "$n"; done`
+const fmListScript = `P=%s; cd -- "$P" 2>/dev/null || { echo "__ERR__no such dir"; exit 1; }; for f in "$P"/.[!.]* "$P"/*; do [ -e "$f" ] || continue; if [ -d "$f" ]; then type=d; size=0; else type=f; size=$(wc -c < "$f" 2>/dev/null || echo 0); fi; m=$(stat -c %%Y "$f" 2>/dev/null || echo 0); n=$(printf '%%s' "${f##*/}" | base64 | tr -d '\n'); printf '%%s\t%%s\t%%s\t%%s\n' "$type" "$size" "$m" "$n"; done`
 
 func validContainerID(id string) bool {
 	return id != "" && id != "." && id != ".." && filepath.Base(id) == id && !strings.ContainsAny(id, `/\\`)
