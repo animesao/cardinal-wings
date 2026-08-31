@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"sync"
 )
 
 // StreamExec runs `cardinal exec <id> <cmd...>` on the local node with
@@ -180,27 +181,36 @@ func Attach(ctx context.Context, id string, stdinCh <-chan string, fn func(strin
 	if err != nil {
 		return fmt.Errorf("attach stdout pipe: %w", err)
 	}
-	c.Stderr = nil // merge stderr into stdout
+	stderrR, err := c.StderrPipe()
+	if err != nil {
+		return fmt.Errorf("attach stderr pipe: %w", err)
+	}
 
 	if err := c.Start(); err != nil {
 		return fmt.Errorf("cardinal attach: %w", err)
 	}
 
-	// Read container output → caller
-	done := make(chan error, 1)
-	go func() {
+	// Read both streams concurrently. `cardinal attach` writes diagnostics to
+	// stderr (for example when the console socket disappears); dropping stderr
+	// made the panel look like a silent disconnect. Never use a single scanner:
+	// the game console is a byte stream and a partial line is still useful.
+	var readers sync.WaitGroup
+	readStream := func(r io.Reader) {
+		defer readers.Done()
 		buf := make([]byte, 4096)
 		for {
-			n, err := stdoutR.Read(buf)
+			n, readErr := r.Read(buf)
 			if n > 0 {
 				fn(string(buf[:n]))
 			}
-			if err != nil {
-				done <- err
+			if readErr != nil {
 				return
 			}
 		}
-	}()
+	}
+	readers.Add(2)
+	go readStream(stdoutR)
+	go readStream(stderrR)
 
 	// Caller input → container stdin
 	go func() {
@@ -220,9 +230,10 @@ func Attach(ctx context.Context, id string, stdinCh <-chan string, fn func(strin
 		}
 	}()
 
-	// Wait for process to exit
+	// Wait for process and drain both pipes before returning. Waiting for the
+	// readers prevents the final console bytes from being lost on shutdown.
 	waitErr := c.Wait()
-	<-done // wait for reader goroutine
+	readers.Wait()
 
 	if ctx.Err() != nil {
 		return ctx.Err()

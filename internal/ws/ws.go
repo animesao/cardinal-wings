@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -21,9 +22,11 @@ const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 // Conn is a websocket connection.
 type Conn struct {
-	conn net.Conn
-	r    *bufio.Reader
-	w    *bufio.Writer
+	conn      net.Conn
+	r         *bufio.Reader
+	w         *bufio.Writer
+	writeMu   sync.Mutex
+	closeOnce sync.Once
 }
 
 // Upgrade performs the websocket handshake on an HTTP request and hijacks the
@@ -70,40 +73,92 @@ func Upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 }
 
 // ReadText reads one text (or binary, treated as text) message, returning
-// its payload. The connection must be used from a single goroutine.
+// its payload. Control frames are handled internally so ping/pong bytes never
+// reach the container stdin. Fragmented data messages are reassembled up to
+// the same 4 MiB limit as a single frame. The connection must be read by one
+// goroutine.
 func (c *Conn) ReadText() ([]byte, error) {
-	fin, opcode, payload, err := readFrame(c.r)
-	if err != nil {
-		return nil, err
+	var message []byte
+	var messageOpcode byte
+	for {
+		fin, opcode, payload, err := readFrame(c.r)
+		if err != nil {
+			return nil, err
+		}
+		switch opcode {
+		case 0x8: // close
+			// A close reply is required by RFC 6455. Echo the close payload,
+			// then let the caller tear down the socket.
+			if err := c.writeControl(0x8, payload); err != nil {
+				return nil, err
+			}
+			return nil, io.EOF
+		case 0x9: // ping -> pong
+			if err := c.writeControl(0xA, payload); err != nil {
+				return nil, err
+			}
+			continue
+		case 0xA: // pong
+			continue
+		case 0x1, 0x2: // first text/binary data frame
+			if messageOpcode != 0 {
+				return nil, errors.New("new data frame before fragmented message ended")
+			}
+			messageOpcode = opcode
+		case 0x0: // continuation frame
+			if messageOpcode == 0 {
+				return nil, errors.New("unexpected continuation frame")
+			}
+		default:
+			return nil, fmt.Errorf("unexpected opcode %d", opcode)
+		}
+
+		if len(message)+len(payload) > 4<<20 {
+			return nil, errors.New("message too large")
+		}
+		message = append(message, payload...)
+		if fin {
+			return message, nil
+		}
+		// A non-final text/binary frame must be followed by continuation
+		// frames; control frames may appear between them and are handled above.
 	}
-	if opcode == 0x8 { // close
-		return nil, io.EOF
-	}
-	if opcode == 0x9 || opcode == 0xA { // ping/pong are handled by the caller
-		return payload, nil
-	}
-	if !fin {
-		return nil, errors.New("fragmented frames are not supported")
-	}
-	if opcode != 0x1 && opcode != 0x2 { // text or binary — panels may send either
-		return nil, fmt.Errorf("unexpected opcode %d", opcode)
-	}
-	return payload, nil
 }
 
-// WriteText sends one text message.
+// WriteText sends one text message. Writes are serialized because output,
+// errors and close notifications may originate from different goroutines.
 func (c *Conn) WriteText(payload []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	if err := writeFrame(c.w, 0x1, payload); err != nil {
 		return err
 	}
 	return c.w.Flush()
 }
 
-// Close sends a close frame and closes the socket.
+func (c *Conn) writeControl(opcode byte, payload []byte) error {
+	if len(payload) > 125 {
+		return errors.New("control frame too large")
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if err := writeFrame(c.w, opcode, payload); err != nil {
+		return err
+	}
+	return c.w.Flush()
+}
+
+// Close sends a close frame and closes the socket exactly once.
 func (c *Conn) Close() error {
-	_ = writeFrame(c.w, 0x8, nil)
-	_ = c.w.Flush()
-	return c.conn.Close()
+	var err error
+	c.closeOnce.Do(func() {
+		c.writeMu.Lock()
+		_ = writeFrame(c.w, 0x8, nil)
+		_ = c.w.Flush()
+		c.writeMu.Unlock()
+		err = c.conn.Close()
+	})
+	return err
 }
 
 func headerContainsToken(header, token string) bool {

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 )
@@ -56,8 +57,16 @@ func TestMaskedFrame(t *testing.T) {
 }
 
 func writeMaskedFrame(w *bufio.Writer, opcode byte, payload []byte) error {
+	return writeMaskedFrameWithFin(w, true, opcode, payload)
+}
+
+func writeMaskedFrameWithFin(w *bufio.Writer, fin bool, opcode byte, payload []byte) error {
 	mask := []byte{1, 2, 3, 4}
-	frame := []byte{0x80 | opcode}
+	first := opcode
+	if fin {
+		first |= 0x80
+	}
+	frame := []byte{first}
 	if len(payload) <= 125 {
 		frame = append(frame, 0x80|byte(len(payload)))
 	} else if len(payload) <= 0xffff {
@@ -89,14 +98,24 @@ func TestUnmaskedFrameRejected(t *testing.T) {
 	}
 }
 
-func TestFragmentedFrameRejected(t *testing.T) {
-	frame := []byte{0x01, 0x81, 1, 2, 3, 4, 'x' ^ 1}
-	fin, _, _, err := readFrame(bufio.NewReader(bytes.NewReader(frame)))
-	if !fin {
-		err = fmt.Errorf("fragmented frames are not supported")
+func TestFragmentedMessageReassembled(t *testing.T) {
+	var buf bytes.Buffer
+	w := bufio.NewWriter(&buf)
+	if err := writeMaskedFrameWithFin(w, false, 0x1, []byte("hel")); err != nil {
+		t.Fatal(err)
 	}
-	if err == nil || !strings.Contains(err.Error(), "fragmented") {
-		t.Fatalf("expected fragmented frame rejection, got %v", err)
+	if err := writeMaskedFrameWithFin(w, true, 0x0, []byte("lo")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	out, err := (&Conn{r: bufio.NewReader(&buf), w: bufio.NewWriter(io.Discard)}).ReadText()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(out) != "hello" {
+		t.Fatalf("message = %q, want hello", out)
 	}
 }
 

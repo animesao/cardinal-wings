@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,6 +21,7 @@ type terminalSession struct {
 	id        string
 	closed    bool
 	stdinCh   chan string
+	done      chan struct{}
 	cancel    context.CancelFunc
 	ring      []string
 	subs      map[chan string]struct{}
@@ -43,9 +45,21 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 	s := &terminalSession{
 		id:      containerID,
 		stdinCh: stdinCh,
+		done:    make(chan struct{}),
 		cancel:  cancel,
 		subs:    map[chan string]struct{}{},
 	}
+
+	// Publish the session before starting cardinal attach. Otherwise a very
+	// short-lived container can finish attach before the session is visible to
+	// the WebSocket/SSE handler, allowing the completed session to be inserted
+	// into the manager after it has already closed.
+	tm.mu.Lock()
+	if old, ok := tm.sessions[containerID]; ok {
+		old.close()
+	}
+	tm.sessions[containerID] = s
+	tm.mu.Unlock()
 
 	// cardinal attach connects to the container's console socket — the
 	// stdin/stdout of the main process (PID 1). For game servers this is the
@@ -57,16 +71,14 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 		err := agent.Attach(sessCtx, containerID, stdinCh, func(data string) {
 			s.broadcast(data)
 		})
-		_ = err
+		// Send the terminal end marker before closing the session so connected
+		// clients can finish cleanly instead of waiting on a dead socket.
+		if err != nil && sessCtx.Err() == nil {
+			s.broadcast("__session_error__:" + err.Error())
+		}
 		s.broadcast("__session_ended__")
+		s.close()
 	}()
-
-	tm.mu.Lock()
-	if old, ok := tm.sessions[containerID]; ok {
-		old.close()
-	}
-	tm.sessions[containerID] = s
-	tm.mu.Unlock()
 
 	return s, nil
 }
@@ -103,12 +115,18 @@ func (s *terminalSession) subscribe() (<-chan string, func()) {
 		default:
 		}
 	}
+	if s.closed {
+		close(ch)
+		return ch, func() {}
+	}
 	s.subs[ch] = struct{}{}
 	return ch, func() {
 		s.mu.Lock()
-		delete(s.subs, ch)
+		if _, ok := s.subs[ch]; ok {
+			delete(s.subs, ch)
+			close(ch)
+		}
 		s.mu.Unlock()
-		close(ch)
 	}
 }
 
@@ -119,12 +137,14 @@ func (s *terminalSession) close() {
 		return
 	}
 	s.closed = true
+	close(s.done)
+	for ch := range s.subs {
+		delete(s.subs, ch)
+		close(ch)
+	}
 	s.mu.Unlock()
 	if s.cancel != nil {
 		s.cancel()
-	}
-	if s.stdinCh != nil {
-		close(s.stdinCh)
 	}
 }
 
@@ -140,6 +160,16 @@ func (tm *terminalManager) remove(id string) {
 	delete(tm.sessions, id)
 }
 
+// removeIf prevents an older connection from deleting a newer session that
+// replaced it for the same container.
+func (tm *terminalManager) removeIf(id string, expected *terminalSession) {
+	tm.mu.Lock()
+	defer tm.mu.Unlock()
+	if tm.sessions[id] == expected {
+		delete(tm.sessions, id)
+	}
+}
+
 // writeInput feeds stdin of the session for a container.
 func (s *terminalSession) writeInput(data string) error {
 	s.mu.Lock()
@@ -148,16 +178,22 @@ func (s *terminalSession) writeInput(data string) error {
 		return io.ErrClosedPipe
 	}
 	s.mu.Unlock()
-	// Feed into the attach stdin channel
-	if s.stdinCh != nil {
-		select {
-		case s.stdinCh <- data:
-			return nil
-		default:
-			return io.ErrShortWrite
-		}
+	// Feed into the attach stdin channel. Never close stdinCh: requests can
+	// arrive concurrently with session shutdown, and sending to a closed
+	// channel would panic. The done channel makes shutdown race-free.
+	if s.stdinCh == nil {
+		return io.ErrClosedPipe
 	}
-	return io.ErrClosedPipe
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case s.stdinCh <- data:
+		return nil
+	case <-s.done:
+		return io.ErrClosedPipe
+	case <-timer.C:
+		return io.ErrShortWrite
+	}
 }
 
 func handleTerminalOpen(w http.ResponseWriter, r *http.Request) {
@@ -226,7 +262,7 @@ func handleTerminalStream(w http.ResponseWriter, r *http.Request) {
 
 	ch, unsubscribe := s.subscribe()
 	defer unsubscribe()
-	defer terminals.remove(id)
+	defer terminals.removeIf(id, s)
 	defer s.close()
 
 	heartbeat := time.NewTicker(5 * time.Second)
@@ -235,7 +271,12 @@ func handleTerminalStream(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-r.Context().Done():
 			return
-		case line := <-ch:
+		case <-s.done:
+			return
+		case line, ok := <-ch:
+			if !ok {
+				return
+			}
 			if line == "__session_ended__" {
 				_, _ = w.Write([]byte("event: end\ndata: {}\n\n"))
 				fl.Flush()
@@ -276,7 +317,7 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer sess.close()
-	defer terminals.remove(id)
+	defer terminals.removeIf(id, sess)
 
 	// Session output -> websocket.
 	done := make(chan struct{})
@@ -284,14 +325,34 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
 		ch, unsubscribe := sess.subscribe()
 		defer unsubscribe()
-		for line := range ch {
-			if line == "__session_ended__" {
+		for {
+			var line string
+			select {
+			case <-sess.done:
+				_ = conn.Close()
 				return
+			case next, ok := <-ch:
+				if !ok {
+					return
+				}
+				line = next
+			}
+			if line == "__session_ended__" {
+				// Unblock the reader goroutine and notify the browser that the
+				// upstream attach process has finished.
+				_ = conn.WriteText([]byte("\r\nСессия терминала завершена\r\n"))
+				_ = conn.Close()
+				return
+			}
+			if strings.HasPrefix(line, "__session_error__:") {
+				_ = conn.WriteText([]byte("\r\nОшибка attach: " + strings.TrimPrefix(line, "__session_error__:") + "\r\n"))
+				continue
 			}
 			// Chunks already contain the real newlines from the container
 			// output — do not append anything, the browser renders them
 			// verbatim with pre-wrap.
 			if err := conn.WriteText([]byte(line)); err != nil {
+				_ = conn.Close()
 				return
 			}
 		}
