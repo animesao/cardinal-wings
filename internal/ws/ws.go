@@ -69,7 +69,12 @@ func Upgrade(w http.ResponseWriter, r *http.Request) (*Conn, error) {
 			return nil, err
 		}
 	}
-	return &Conn{conn: conn, r: bufio.NewReader(conn), w: bufio.NewWriter(conn)}, nil
+	// Hijack returns a bufio.ReadWriter that may already contain the first
+	// websocket frame when the browser sends it in the same TCP packet as the
+	// HTTP upgrade. Replacing brw.Reader here loses those bytes and leaves the
+	// frame parser out of sync, which commonly surfaces as ECONNRESET in the
+	// panel. Keep both buffered sides returned by Hijack.
+	return &Conn{conn: conn, r: brw.Reader, w: brw.Writer}, nil
 }
 
 // ReadText reads one text (or binary, treated as text) message, returning

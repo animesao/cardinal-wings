@@ -319,23 +319,19 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	defer sess.close()
 	defer terminals.removeIf(id, sess)
 
-	// Session output -> websocket.
-	done := make(chan struct{})
+	// Session output -> websocket. The writer is the only goroutine that writes
+	// application frames; ws.Conn serializes control frames as well.
 	go func() {
-		defer close(done)
 		ch, unsubscribe := sess.subscribe()
 		defer unsubscribe()
 		for {
-			var line string
-			select {
-			case <-sess.done:
-				_ = conn.Close()
+			// Do not select on sess.done here. close() closes the subscriber
+			// channel after broadcasting the end marker; selecting both channels
+			// would randomly choose done and drop the final marker because Go is
+			// allowed to choose either ready case.
+			line, ok := <-ch
+			if !ok {
 				return
-			case next, ok := <-ch:
-				if !ok {
-					return
-				}
-				line = next
 			}
 			if line == "__session_ended__" {
 				// Unblock the reader goroutine and notify the browser that the
@@ -358,7 +354,8 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	// Websocket input -> session stdin.
+	// Websocket input -> session stdin. ReadText consumes control frames and
+	// replies to ping/close internally, so only actual data reaches stdin.
 	for {
 		msg, err := conn.ReadText()
 		if err != nil {
