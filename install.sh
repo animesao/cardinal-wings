@@ -263,12 +263,38 @@ fi
 # ------------------------------------------------------------
 # 3. systemd unit
 # ------------------------------------------------------------
-if [ -f "systemd/cardinal-wings.service" ]; then
-  UNIT_SRC="systemd/cardinal-wings.service"
-else
-  echo "==> fetching systemd unit"
-  UNIT_SRC="/tmp/cardinal-wings.service"
-  curl -fsSL --retry 2 --connect-timeout 10 "${RAW}/systemd/cardinal-wings.service" -o "${UNIT_SRC}"
+# The systemd unit is embedded so the installer never needs GitHub for it.
+# Override with WINGS_SYSTEMD_URL to supply a custom unit.
+unit_body() {
+  cat <<EOF
+[Unit]
+Description=cardinal-wings REST API daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=${BIN_DIR}/cardinal-wings --config ${CONF_DIR}/config.toml
+Restart=on-failure
+RestartSec=5s
+Environment=CARDINAL_DATA_DIR=/root/.cardinal
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+UNIT_SRC="/tmp/cardinal-wings.service"
+unit_body > "${UNIT_SRC}"
+if [ -n "${WINGS_SYSTEMD_URL:-}" ]; then
+  echo "==> downloading custom systemd unit from WINGS_SYSTEMD_URL"
+  if curl -fsSL --retry 2 --connect-timeout 10 "${WINGS_SYSTEMD_URL}" -o "${UNIT_SRC}"; then
+    chmod 644 "${UNIT_SRC}"
+  else
+    echo "    warn: could not fetch WINGS_SYSTEMD_URL — using the embedded unit" >&2
+    unit_body > "${UNIT_SRC}"
+  fi
 fi
 install -m 644 "${UNIT_SRC}" "${SYSTEMD_DIR}/cardinal-wings.service"
 systemctl daemon-reload 2>/dev/null || true
