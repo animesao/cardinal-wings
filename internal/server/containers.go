@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -195,6 +197,23 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+
+	// Panel containers get a persistent data volume: a bind directory on the
+	// host keyed by container name. It survives container recreate (files are
+	// not lost on reinstall) and keeps backups/file-manager fast — tar only
+	// touches the data dir instead of the whole overlay. The panel sends the
+	// volume without a source; Wings owns the host path.
+	for i := range req.Volumes {
+		if req.Volumes[i].Source == "" {
+			vol := &req.Volumes[i]
+			vol.Source = filepath.Join(cardinalDataDir(), "servers", req.Name)
+			if err := os.MkdirAll(vol.Source, 0755); err != nil {
+				writeError(w, http.StatusInternalServerError, "create data volume: "+err.Error())
+				return
+			}
+		}
+	}
+
 	res, err := c.Create(r.Context(), &req)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, ErrBadRequest, "create: %s", err.Error())
