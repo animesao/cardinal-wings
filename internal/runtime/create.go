@@ -21,18 +21,19 @@ type VolumeBinding struct {
 
 // CreateRequest is the panel-facing payload for creating a container.
 type CreateRequest struct {
-	Name    string            `json:"name"`
-	Image   string            `json:"image"`
-	Cmd     []string          `json:"cmd,omitempty"`
-	Env     []string          `json:"env,omitempty"`
-	Ports   []PortBinding     `json:"ports,omitempty"`
-	Volumes []VolumeBinding   `json:"volumes,omitempty"`
-	Restart string            `json:"restart,omitempty"`
-	Memory  int64             `json:"memory_bytes,omitempty"`
-	CPUs    float64           `json:"cpus,omitempty"`
-	Disk    int64             `json:"disk_bytes,omitempty"`
-	Labels  map[string]string `json:"labels,omitempty"`
-	DNS     []string          `json:"dns,omitempty"`
+	Name          string            `json:"name"`
+	Image         string            `json:"image"`
+	Cmd           []string          `json:"cmd,omitempty"`
+	Env           []string          `json:"env,omitempty"`
+	StartupScript string            `json:"startup_script,omitempty"`
+	Ports         []PortBinding     `json:"ports,omitempty"`
+	Volumes       []VolumeBinding   `json:"volumes,omitempty"`
+	Restart       string            `json:"restart,omitempty"`
+	Memory        int64             `json:"memory_bytes,omitempty"`
+	CPUs          float64           `json:"cpus,omitempty"`
+	Disk          int64             `json:"disk_bytes,omitempty"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	DNS           []string          `json:"dns,omitempty"`
 }
 
 // CreateResult is returned on success.
@@ -42,12 +43,13 @@ type CreateResult struct {
 
 // dockerCreateRequest maps to cardinal's CreateContainerRequest.
 type dockerCreateRequest struct {
-	Hostname   string                  `json:"Hostname"`
-	Env        []string                `json:"Env,omitempty"`
-	Cmd        []string                `json:"Cmd,omitempty"`
-	Image      string                  `json:"Image"`
-	Labels     map[string]string       `json:"Labels,omitempty"`
-	HostConfig *dockerCreateHostConfig `json:"HostConfig,omitempty"`
+	Hostname      string                  `json:"Hostname"`
+	Env           []string                `json:"Env,omitempty"`
+	Cmd           []string                `json:"Cmd,omitempty"`
+	Image         string                  `json:"Image"`
+	Labels        map[string]string       `json:"Labels,omitempty"`
+	StartupScript string                  `json:"StartupScript,omitempty"`
+	HostConfig    *dockerCreateHostConfig `json:"HostConfig,omitempty"`
 }
 
 type dockerCreateHostConfig struct {
@@ -98,11 +100,12 @@ func (c *Client) Create(ctx context.Context, req *CreateRequest) (*CreateResult,
 	}
 
 	body := dockerCreateRequest{
-		Hostname: req.Name,
-		Env:      req.Env,
-		Cmd:      req.Cmd,
-		Image:    req.Image,
-		Labels:   req.Labels,
+		Hostname:      req.Name,
+		Env:           req.Env,
+		Cmd:           req.Cmd,
+		Image:         req.Image,
+		Labels:        req.Labels,
+		StartupScript: req.StartupScript,
 		HostConfig: &dockerCreateHostConfig{
 			Binds:         binds,
 			PortBindings:  portBindings,

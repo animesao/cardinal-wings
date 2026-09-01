@@ -157,7 +157,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp", "limits":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp", "limits", "update":
 		return true
 	case "sftp":
 		return method != http.MethodGet
@@ -201,6 +201,29 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, res)
+}
+
+// handleContainerUpdate forwards a generic update payload (startup script, env,
+// memory/CPU/disk) to cardinal's /containers/<id>/update. Startup and env are
+// persisted by cardinal and applied on the next container start, so the panel's
+// "Запуск" tab takes effect on restart without recreating the container.
+func handleContainerUpdate(w http.ResponseWriter, r *http.Request, ref string, c *runtime.Client) {
+	var req map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid update JSON: "+err.Error())
+		return
+	}
+	if len(req) == 0 {
+		writeError(w, http.StatusBadRequest, "no changes supplied")
+		return
+	}
+
+	res, err := c.UpdateContainer(r.Context(), ref, req)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, ErrInternal, "update %s: %s", ref, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // handleContainerLimits changes a container's memory/CPU/disk limits in place
@@ -319,6 +342,9 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "limits" && r.Method == http.MethodPost:
 		handleContainerLimits(w, r, ref, c)
+
+	case action == "update" && r.Method == http.MethodPost:
+		handleContainerUpdate(w, r, ref, c)
 
 	case action == "exec" && r.Method == http.MethodPost:
 		handleContainerExec(w, r, ref, c)
