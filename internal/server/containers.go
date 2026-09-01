@@ -409,6 +409,11 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, ErrInternal, "remove %s: %s", ref, err.Error())
 			return
 		}
+		// Убираем SFTP-креду удалённого контейнера, чтобы не копились
+		// протухшие записи (container id пересоздаётся заново).
+		if sftpStoreInst != nil {
+			_ = sftpStoreInst.remove(ref)
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"removed": ref})
 
 	default:

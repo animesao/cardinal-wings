@@ -95,13 +95,22 @@ func (s *sftpStore) save() error {
 	return os.Rename(tmp, s.path)
 }
 
-// set upserts the credential for a container.
+// set upserts the credential for a container. Any older entries with the same
+// username are removed first: container ids change on every recreate (image
+// change / reinstall), so the same username may exist under several ids, and
+// entryByUsername walks a map in non-deterministic order — duplicates would
+// make authentication randomly fail with "access denied".
 func (s *sftpStore) set(containerID, username, password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
+	for id, e := range s.byID {
+		if e.Username == username {
+			delete(s.byID, id)
+		}
+	}
 	s.byID[containerID] = &sftpEntry{Username: username, PasswordHash: string(hash), ContainerID: containerID}
 	s.mu.Unlock()
 	return s.save()
