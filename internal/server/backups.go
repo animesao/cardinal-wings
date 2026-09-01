@@ -37,8 +37,18 @@ func handleContainerBackup(w http.ResponseWriter, r *http.Request, ref string) {
 		_ = rc.SetReadDeadline(time.Now().Add(backupDeadline))
 	}
 
-	root := fmRoot(r.Context(), ref)
-	if root == "/" {
+	// Prefer the host-side data root: it resolves even when the container is
+	// stopped (the overlay stays mounted) and never needs exec. The exec-based
+	// fmRoot probe is only a fallback for the unmounted-overlay case (e.g.
+	// after a host reboot before the container starts), where exec is the only
+	// way to ask the container where its data lives.
+	root := ""
+	if p, _, err := containerDataRoot(ref); err == nil {
+		root = p
+	} else {
+		root = fmRoot(r.Context(), ref)
+	}
+	if root == "/" || root == "" {
 		writeError(w, http.StatusBadRequest, "container has no dedicated data mount; refusing to back up the whole filesystem")
 		return
 	}

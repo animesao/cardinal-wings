@@ -163,7 +163,7 @@ func Load(path string) (*Config, error) {
 					cfg.Server.IdleTimeout = v
 				}
 			case "sftp_enabled":
-				cfg.Server.SFTPEnabled = value == "true"
+				cfg.Server.SFTPEnabled = parseBool(value)
 			case "sftp_host":
 				cfg.Server.SFTPHost = unquote(value)
 			case "sftp_port":
@@ -200,7 +200,7 @@ func Load(path string) (*Config, error) {
 			cfg.consumeNode(key, value)
 		case "remote":
 			if key == "metrics_requires_auth" {
-				cfg.Remote.MetricsRequiresAuth = value == "true"
+				cfg.Remote.MetricsRequiresAuth = parseBool(value)
 			}
 		case "webhooks":
 			cfg.consumeWebhook(key, value)
@@ -297,7 +297,7 @@ func (c *Config) consumeWebhook(key, value string) {
 		case "secret":
 			last.Secret = unquote(value)
 		case "enabled":
-			last.Enabled = value == "true"
+			last.Enabled = parseBool(value)
 		}
 	}
 }
@@ -317,9 +317,21 @@ func (c *Config) consumeNode(key, value string) {
 		case "token":
 			last.Token = unquote(value)
 		case "enabled":
-			last.Enabled = value == "true"
+			last.Enabled = parseBool(value)
 		}
 	}
+}
+
+// parseBool accepts the boolean spellings installers and hand-written configs
+// use (true/1/yes/on). The old strict "true"-only comparison silently turned
+// `sftp_enabled = 1` (written by the wings installer) into false, so SFTP was
+// reported as disabled even though the default config enables it.
+func parseBool(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "1", "true", "yes", "on", "y":
+		return true
+	}
+	return false
 }
 
 // Validate checks the config is coherent enough to start.

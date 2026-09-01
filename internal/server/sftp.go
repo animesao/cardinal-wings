@@ -136,7 +136,10 @@ func wingsDataDir() string {
 	if dir := os.Getenv("WINGS_DATA_DIR"); dir != "" {
 		return dir
 	}
-	return "."
+	// Fall back to cardinal's state directory instead of the process working
+	// directory (which is "/" under systemd) so the SFTP store and host key
+	// live in a predictable, writable location next to container data.
+	return cardinalDataDir()
 }
 
 // ─── Host key ────────────────────────────────────────────
