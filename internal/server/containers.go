@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,19 +196,16 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Panel containers get a persistent data volume: a bind directory on the
-	// host keyed by container name. It survives container recreate (files are
-	// not lost on reinstall) and keeps backups/file-manager fast — tar only
-	// touches the data dir instead of the whole overlay. The panel sends the
-	// volume without a source; Wings owns the host path.
+	// Panel containers get a persistent data volume: a named cardinal volume
+	// keyed by container name. cardinal auto-creates named volumes inside its
+	// own state directory and mounts them — unlike host binds they are not
+	// subject to the protected-host-path check, they survive container
+	// recreates (image change/reinstall keeps files), and backups/file-manager
+	// only touch the data dir instead of the whole overlay. The panel sends
+	// the volume without a source; Wings assigns the name.
 	for i := range req.Volumes {
 		if req.Volumes[i].Source == "" {
-			vol := &req.Volumes[i]
-			vol.Source = filepath.Join(cardinalDataDir(), "servers", req.Name)
-			if err := os.MkdirAll(vol.Source, 0755); err != nil {
-				writeError(w, http.StatusInternalServerError, "create data volume: "+err.Error())
-				return
-			}
+			req.Volumes[i].Source = "srv-" + req.Name
 		}
 	}
 
