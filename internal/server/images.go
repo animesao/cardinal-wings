@@ -6,9 +6,9 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
-	"github.com/animesao/cardinal-wings/internal/auth"
-	"github.com/animesao/cardinal-wings/internal/tasks"
+	"github.com/kuranix/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/auth"
+	"github.com/kuranix/cardinal-wings/internal/tasks"
 )
 
 // imageRoutes mounts the Phase 2 image endpoints against the runtime client.

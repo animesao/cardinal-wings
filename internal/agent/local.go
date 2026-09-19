@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/animesao/cardinal-wings/internal/runtime"
+	"github.com/kuranix/cardinal-wings/internal/runtime"
 )
 
 // Local is a handle to the local cardinal node.

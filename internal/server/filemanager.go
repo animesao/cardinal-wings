@@ -14,7 +14,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/agent"
 )
 
 // fmEntry is one directory entry returned by /fm/list.

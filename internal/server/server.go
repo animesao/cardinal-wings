@@ -16,14 +16,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
-	"github.com/animesao/cardinal-wings/internal/auth"
-	"github.com/animesao/cardinal-wings/internal/config"
-	"github.com/animesao/cardinal-wings/internal/runtime"
+	"github.com/kuranix/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/auth"
+	"github.com/kuranix/cardinal-wings/internal/config"
+	"github.com/kuranix/cardinal-wings/internal/runtime"
 )
 
 // version is a build-time variable overwritten by the release pipeline via
-// `-ldflags "-X github.com/animesao/cardinal-wings/internal/server.version=…"`.
+// `-ldflags "-X github.com/kuranix/cardinal-wings/internal/server.version=…"`.
 // Its default keeps local `go build` builds identifiable as dev builds.
 var version = "dev"
 

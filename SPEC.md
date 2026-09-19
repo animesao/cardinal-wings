@@ -186,7 +186,7 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 
 ```
 cardinal-wings/
-├── go.mod            # module github.com/animesao/cardinal-wings; no replace needed
+├── go.mod            # module github.com/kuranix/cardinal-wings; no replace needed
 ├── main.go
 ├── internal/
 │   ├── config/       # TOML config: keys, roles, bind, TLS, remote nodes

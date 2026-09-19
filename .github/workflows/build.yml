@@ -110,7 +110,7 @@ jobs:
         run: |
           out="cardinal-wings-${{ matrix.goos }}-${{ matrix.goarch }}"
           CGO_ENABLED=0 go build -trimpath \
-            -ldflags="-s -w -buildid= -X github.com/animesao/cardinal-wings/internal/server.version=${{ steps.version.outputs.tag }}" \
+            -ldflags="-s -w -buildid= -X github.com/kuranix/cardinal-wings/internal/server.version=${{ steps.version.outputs.tag }}" \
             -o "dist/$out" .
           sha256sum "dist/$out" > "dist/$out.sha256"
           echo "built dist/$out (${{ steps.version.outputs.tag }})"

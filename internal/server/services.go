@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
-	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/kuranix/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/auth"
 )
 
 // servicesRoutes mounts /v1/services and /v1/functions. These delegate to the

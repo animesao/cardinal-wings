@@ -37,7 +37,7 @@ jobs:
       - name: checkout cardinal
         uses: actions/checkout@v4
         with:
-          repository: animesao/cardinal
+          repository: kuranix/cardinal
           path: cardinal-src
 
       - name: setup-go (1.26.6)

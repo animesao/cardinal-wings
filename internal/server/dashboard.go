@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/kuranix/cardinal-wings/internal/auth"
 ) // nodeSummary is the per-node block returned by /v1/system/info.
 type nodeSummary struct {
 	Name            string `json:"name"`

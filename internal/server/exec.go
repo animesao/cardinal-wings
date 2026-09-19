@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
-	"github.com/animesao/cardinal-wings/internal/runtime"
+	"github.com/kuranix/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/runtime"
 )
 
 // handleContainerLogs serves container logs on the given node client. When

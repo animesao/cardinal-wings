@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/animesao/cardinal-wings/internal/config"
+	"github.com/kuranix/cardinal-wings/internal/config"
 )
 
 // withRole stores the authenticated role on a request context.

@@ -7,11 +7,11 @@
 # API key. No Go toolchain required.
 #
 # Usage (recommended — avoids pipe issues):
-#   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh -o /tmp/install-wings.sh
+#   curl -fsSL https://raw.githubusercontent.com/kuranix/cardinal-wings/main/install.sh -o /tmp/install-wings.sh
 #   sudo bash /tmp/install-wings.sh
 #
 # Alternative:
-#   curl -fsSL https://raw.githubusercontent.com/animesao/cardinal-wings/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/kuranix/cardinal-wings/main/install.sh | sudo bash
 #
 #   sudo bash install.sh              # install latest release
 #   sudo bash install.sh v0.4.2       # install a specific tag
@@ -32,7 +32,7 @@
 # ============================================================
 set -euo pipefail
 
-OWNER="animesao"
+OWNER="kuranix"
 REPO="cardinal-wings"
 RAW="https://raw.githubusercontent.com/${OWNER}/${REPO}/main"
 
@@ -116,7 +116,7 @@ if [ "${VERSION}" = "local" ] || [ "${VERSION}" = "dev" ]; then
   fi
   echo "==> building from local source"
   go build -trimpath \
-    -ldflags="-s -w -X github.com/animesao/cardinal-wings/internal/server.version=dev" \
+    -ldflags="-s -w -X github.com/kuranix/cardinal-wings/internal/server.version=dev" \
     -o "${BIN_DIR}/cardinal-wings" .
 else
   # Resolve the version: prefer the site mirror, fall back to the GitHub API.
@@ -319,7 +319,7 @@ else
   echo ""
   echo "    NOTE: 'cardinal' was not found in PATH."
   echo "    Install it first:"
-  echo "      curl -fsSL https://raw.githubusercontent.com/animesao/cardinal/main/install.sh | sudo bash"
+  echo "      curl -fsSL https://raw.githubusercontent.com/kuranix/cardinal/main/install.sh | sudo bash"
   echo ""
 fi
 

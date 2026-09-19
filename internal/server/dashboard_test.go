@@ -7,9 +7,9 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/animesao/cardinal-wings/internal/auth"
-	"github.com/animesao/cardinal-wings/internal/config"
-	"github.com/animesao/cardinal-wings/internal/runtime"
+	"github.com/kuranix/cardinal-wings/internal/auth"
+	"github.com/kuranix/cardinal-wings/internal/config"
+	"github.com/kuranix/cardinal-wings/internal/runtime"
 )
 
 func TestFilterContainers(t *testing.T) {

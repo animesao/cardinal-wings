@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/animesao/cardinal-wings/internal/runtime"
+	"github.com/kuranix/cardinal-wings/internal/runtime"
 )
 
 // nodeEntry holds one node's display name and its runtime client.

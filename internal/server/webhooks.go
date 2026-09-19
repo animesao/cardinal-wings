@@ -1,9 +1,9 @@
 package server
 
 import (
-	"github.com/animesao/cardinal-wings/internal/config"
-	"github.com/animesao/cardinal-wings/internal/tasks"
-	"github.com/animesao/cardinal-wings/internal/webhooks"
+	"github.com/kuranix/cardinal-wings/internal/config"
+	"github.com/kuranix/cardinal-wings/internal/tasks"
+	"github.com/kuranix/cardinal-wings/internal/webhooks"
 )
 
 // notifier delivers webhook events to configured URLs.

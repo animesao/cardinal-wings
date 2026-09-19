@@ -4,7 +4,7 @@
 > is the plan and an early skeleton.
 
 cardinal-wings is a REST API daemon for managing
-[cardinal](https://github.com/animesao/cardinal) over HTTP. It's the single
+[cardinal](https://github.com/kuranix/cardinal) over HTTP. It's the single
 entry point a control-plane / web panel (`cardinal-panel`) talks to instead of
 SSH + CLI — for one host or across the whole cardinal cluster.
 
@@ -39,7 +39,7 @@ REST schema, cross-node routing and streaming — it re-implements nothing.
 
 ```
 cardinal-wings/
-├── go.mod                        # module github.com/animesao/cardinal-wings (no replace)
+├── go.mod                        # module github.com/kuranix/cardinal-wings (no replace)
 ├── main.go                       # flag parsing + boot
 ├── config.example.toml           # documented keys / roles / nodes
 ├── internal/
@@ -125,7 +125,7 @@ curl -fsSL https://cardinal.spcfy.eu/downloads/install-wings.sh -o /tmp/install-
 sudo bash /tmp/install-wings.sh
 
 # or straight from GitHub Releases
-curl -fsSL https://github.com/animesao/cardinal-wings/releases/latest/download/install.sh -o /tmp/install-wings.sh
+curl -fsSL https://github.com/kuranix/cardinal-wings/releases/latest/download/install.sh -o /tmp/install-wings.sh
 sudo bash /tmp/install-wings.sh
 ```
 

@@ -39,7 +39,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/animesao/cardinal-wings/internal/config"
+	"github.com/kuranix/cardinal-wings/internal/config"
 )
 
 // ─── Credential store ────────────────────────────────────

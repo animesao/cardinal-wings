@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/agent"
 )
 
 // decodeJSON decodes a JSON body with a size cap.

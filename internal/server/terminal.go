@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
-	"github.com/animesao/cardinal-wings/internal/ws"
+	"github.com/kuranix/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/ws"
 )
 
 // terminalSession is one console session attached to a container's main

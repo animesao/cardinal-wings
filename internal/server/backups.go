@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/kuranix/cardinal-wings/internal/agent"
 )
 
 // backupDeadline covers slow transfers: a multi-GB world over a slow link
