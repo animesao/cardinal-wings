@@ -39,3 +39,5 @@ Auth: multiple API keys with roles (`readonly`/`admin`), rate-limited, loopback 
 Full API reference, live install commands and the release list:
 https://animesao.work.gd/wings — versions on that page are pulled
 live from GitHub Releases.
+
+[![cardinal-wings docs](https://img.shields.io/badge/docs-cardinal--wings-8b5cf6?style=flat-square)](https://animesao.work.gd/wings)
