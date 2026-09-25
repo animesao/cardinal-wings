@@ -128,7 +128,9 @@ jobs:
           test "$code" = "404" || { echo "expected 404, got $code"; exit 1; }
 
           echo "== error envelope shape =="
-          curl -sf -H "$AUTH" "$BASE/v1/tasks/does-not-exist" | grep -q '"code"'
+          # NOTE: no -f here — a 404 is the expected answer, we assert its body
+          # carries the uniform {"error":{"code":...}} envelope.
+          curl -s -H "$AUTH" "$BASE/v1/tasks/does-not-exist" | grep -q '"code":"not_found"'
 
           echo "ALL E2E CHECKS PASSED"
 
