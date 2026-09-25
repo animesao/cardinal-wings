@@ -27,8 +27,8 @@
 #   WINGS_SFTP_PORT= SFTP listen port (default 2022)
 #   WINGS_NO_FIREWALL=1  skip automatic firewall port opening
 #   WINGS_UPDATE_CARDINAL=1  also update the 'cardinal' runtime to latest (default 0)
-#   WINGS_MIRROR=...    mirror base for binaries (default https://cardinal.spcfy.eu/downloads/wings;
-#                       set WINGS_MIRROR="" to force GitHub-only)
+#   WINGS_MIRROR=...    optional self-hosted mirror base for binaries
+#                       (default empty = GitHub Releases only)
 #   WINGS_SKIP_VERIFY=1 disable SHA256 verification against the mirror
 # ============================================================
 set -euo pipefail
@@ -50,7 +50,7 @@ WINGS_SFTP="${WINGS_SFTP:-1}"
 WINGS_SFTP_HOST="${WINGS_SFTP_HOST:-0.0.0.0}"
 WINGS_SFTP_PORT="${WINGS_SFTP_PORT:-2022}"
 WINGS_NO_FIREWALL="${WINGS_NO_FIREWALL:-0}"
-WINGS_MIRROR="${WINGS_MIRROR:-https://cardinal.spcfy.eu/downloads/wings}"
+WINGS_MIRROR="${WINGS_MIRROR:-}"
 WINGS_SKIP_VERIFY="${WINGS_SKIP_VERIFY:-0}"
 
 # ------------------------------------------------------------
