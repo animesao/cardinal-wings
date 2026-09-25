@@ -384,6 +384,11 @@ paths:
                 replicas: { type: integer }
       responses: { "200": { description: scaled } }
   /v1/services/{name}:
+    get:
+      tags: [services]
+      summary: Inspect a service
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: service } }
     delete:
       tags: [services]
       summary: Remove a service (admin)
@@ -547,12 +552,6 @@ paths:
       summary: Raw cardinal /info for a node
       parameters: [{ name: node, in: query, schema: { type: string } }]
       responses: { "200": { description: info } }
-  /v1/services/{name}:
-    get:
-      tags: [services]
-      summary: Inspect a service
-      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
-      responses: { "200": { description: service } }
   /v1/services/{name}/update:
     post:
       tags: [services]
