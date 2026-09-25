@@ -93,6 +93,26 @@ paths:
       responses:
         "200":
           description: text/event-stream of container events
+  /healthz:
+    get:
+      tags: [system]
+      security: []
+      summary: Readiness probe, no auth
+      responses:
+        "200":
+          description: ok, or 503 degraded without cardinal
+  /v1/sftp/info:
+    get:
+      tags: [system]
+      summary: SFTP listener status
+      responses:
+        "200":
+          description: host, port and enabled flag
+  /v1/bootstrap/ensure:
+    post:
+      tags: [system]
+      summary: Install and start cardinal boot supervisor (admin)
+      responses: { "200": { description: ensured } }
   /v1/containers:
     get:
       tags: [containers]
@@ -166,9 +186,12 @@ paths:
   /v1/containers/{id}/stats:
     get:
       tags: [containers]
-      summary: Stats
-      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { "200": { description: Docker stats schema } }
+      summary: Stats (?stream=1 → live SSE)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: stream, in: query, schema: { type: boolean } }
+        - { name: interval, in: query, schema: { type: string } }
+      responses: { "200": { description: Docker stats schema or SSE stream } }
   /v1/containers/{id}/logs:
     get:
       tags: [containers]
@@ -225,6 +248,177 @@ paths:
       summary: Read the terminal session output (SSE)
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { "200": { description: SSE stream } }
+  /v1/containers/{id}/terminal/ws:
+    get:
+      tags: [containers]
+      summary: Terminal session over websocket (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: websocket stream } }
+  /v1/containers/{id}/fs/ls:
+    get:
+      tags: [containers]
+      summary: List files inside the container
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: file list } }
+  /v1/containers/{id}/fs/cat:
+    get:
+      tags: [containers]
+      summary: Show a file inside the container
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: file content } }
+  /v1/containers/{id}/fs/tree:
+    get:
+      tags: [containers]
+      summary: Directory tree inside the container
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: tree } }
+  /v1/containers/{id}/fm/list:
+    get:
+      tags: [containers]
+      summary: File manager list (admin reads allowed)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: entries } }
+  /v1/containers/{id}/fm/read:
+    get:
+      tags: [containers]
+      summary: File manager read file
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: content } }
+  /v1/containers/{id}/fm/download:
+    get:
+      tags: [containers]
+      summary: File manager download file (base64)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: base64 content } }
+  /v1/containers/{id}/fm/write:
+    post:
+      tags: [containers]
+      summary: File manager write/upload file, base64 content (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string }
+                content: { type: string }
+      responses: { "200": { description: written } }
+  /v1/containers/{id}/fm/mkdir:
+    post:
+      tags: [containers]
+      summary: File manager create directory (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: created } }
+  /v1/containers/{id}/fm/rm:
+    post:
+      tags: [containers]
+      summary: File manager remove file or directory (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/containers/{id}/fm/move:
+    post:
+      tags: [containers]
+      summary: File manager move/rename (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                src: { type: string }
+                dst: { type: string }
+      responses: { "200": { description: moved } }
+  /v1/containers/{id}/fm/chmod:
+    post:
+      tags: [containers]
+      summary: File manager chmod (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: chmodded } }
+  /v1/containers/{id}/backup:
+    get:
+      tags: [containers]
+      summary: Download container data as tar.gz
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: tar.gz archive } }
+    post:
+      tags: [containers]
+      summary: Restore container data from tar.gz, ?clean=1 for exact restore (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: restored } }
+  /v1/containers/{id}/cp:
+    post:
+      tags: [containers]
+      summary: Copy files host<->container via cardinal cp (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [src, dst]
+              properties:
+                src: { type: string }
+                dst: { type: string }
+      responses: { "200": { description: copied } }
+  /v1/containers/{id}/limits:
+    post:
+      tags: [containers]
+      summary: Change memory/CPU/disk limits in place (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                memory_bytes: { type: integer }
+                cpus: { type: number }
+                disk_bytes: { type: integer }
+      responses: { "200": { description: updated } }
+  /v1/containers/{id}/update:
+    post:
+      tags: [containers]
+      summary: Update startup script/env/resources, applied on restart (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: updated } }
+  /v1/containers/{id}/sftp:
+    get:
+      tags: [containers]
+      summary: SFTP credential status for a container
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: status } }
+    put:
+      tags: [containers]
+      summary: Set SFTP credential for a container (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses: { "200": { description: set } }
+    delete:
+      tags: [containers]
+      summary: Remove SFTP credential (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
   /v1/images:
     get:
       tags: [images]

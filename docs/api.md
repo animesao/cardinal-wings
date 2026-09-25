@@ -96,6 +96,79 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
   -d '{"mapping":"443:80/tcp"}' localhost:8080/v1/containers/<id>/ports/add
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"mapping":"443/tcp"}' localhost:8080/v1/containers/<id>/ports/remove
+
+# Limits + update (admin) — limits apply live to the cgroup, the rest on restart
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"memory_bytes":2147483648,"cpus":2}' localhost:8080/v1/containers/<id>/limits
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"startup_script":"#!/bin/sh\nexec python /bot/bot.py","env":["BOT_TOKEN=secret"]}' \
+  localhost:8080/v1/containers/<id>/update
+
+# Live stats stream (SSE, ?interval=2s)
+curl -N -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/stats?stream=1&interval=2s"
+```
+
+## Terminal (interactive shell, admin)
+
+```bash
+# Open a session attached to the container's main process
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/terminal
+# → {"session":"...","shell":"attach"}
+
+# Feed stdin
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"data":"ls -la\n"}' localhost:8080/v1/containers/<id>/terminal/input
+
+# Read output as SSE, or raw duplex over websocket
+curl -N -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/terminal/stream
+# ws://localhost:8080/v1/containers/<id>/terminal/ws  (Authorization: Bearer KEY)
+```
+
+## Files (read-only fs + read/write file manager + cp)
+
+```bash
+# Read-only browser (works on stopped containers too)
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fs/ls?path=/etc/nginx"
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fs/cat?path=/etc/nginx/nginx.conf"
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fs/tree?path=/data"
+
+# File manager: list/read/download are reads, the rest is admin
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/list?path=/"
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/read?path=/app/config.yml"
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/app/config.yml","content":"<base64>"}' localhost:8080/v1/containers/<id>/fm/write
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/data/worlds"}' localhost:8080/v1/containers/<id>/fm/mkdir
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/tmp/old.log"}' localhost:8080/v1/containers/<id>/fm/rm
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"src":"/a.txt","dst":"/b.txt"}' localhost:8080/v1/containers/<id>/fm/move
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/app/run.sh","mode":"755"}' localhost:8080/v1/containers/<id>/fm/chmod
+
+# Copy host <-> container (admin, {src, dst} like `cardinal cp`)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"src":"./index.html","dst":"web:/usr/share/nginx/html/index.html"}' \
+  localhost:8080/v1/containers/<id>/cp
+```
+
+## Backup (whole data dir as tar.gz)
+
+```bash
+# Download (GET) / restore (POST, ?clean=1 wipes the data root first, admin)
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/backup -o backup.tar.gz
+curl -X POST -H "Authorization: Bearer KEY" --data-binary @backup.tar.gz \
+  "localhost:8080/v1/containers/<id>/backup?clean=1"
+```
+
+## Events & bootstrap
+
+```bash
+# Container events as SSE (started/stopped/removed)
+curl -N -H "Authorization: Bearer KEY" localhost:8080/v1/events
+
+# Ensure the cardinal boot supervisor on this node (admin, idempotent)
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/bootstrap/ensure
 ```
 
 ## SFTP
