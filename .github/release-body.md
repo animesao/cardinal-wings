@@ -33,3 +33,9 @@ Or download the binary for your platform and run:
 - `GET /v1/nodes`, `/v1/cluster/health|replicas|containers`
 
 Auth: multiple API keys with roles (`readonly`/`admin`), rate-limited, loopback by default.
+
+## Docs & versions
+
+Full API reference, live install commands and the release list:
+https://animesao.work.gd/wings — versions on that page are pulled
+live from GitHub Releases.
