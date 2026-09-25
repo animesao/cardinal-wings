@@ -97,7 +97,15 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 | GET | `/v1/containers/{id}` | inspect |
 | POST | `/v1/containers/{id}/start` · `/stop` · `/restart` · `/kill` | admin |
 | DELETE | `/v1/containers/{id}` | `?force=1` (admin) |
-| GET | `/v1/containers/{id}/stats` | Docker stats schema |
+| POST | `/v1/containers/{id}/rename?name=` | rename (admin) |
+| GET | `/v1/containers/{id}/top?ps_args=` | process list |
+| POST | `/v1/containers/{id}/wait` | wait for exit (admin) |
+| GET | `/v1/containers/{id}/changes` | filesystem diff |
+| GET | `/v1/containers/{id}/export` | filesystem tar download |
+| POST | `/v1/containers/{id}/commit` | `{repo, tag}` via `cardinal commit` (admin) |
+| GET | `/v1/containers/{id}/ports` | `cardinal port <id>` |
+| POST | `/v1/containers/{id}/ports/add` · `/ports/remove` | `{mapping}` via `cardinal port` (admin) |
+| GET | `/v1/containers/{id}/stats` | Docker stats schema (+ `?stream=1` SSE) |
 | GET | `/v1/containers/{id}/logs?tail=…&follow=1` | `follow=1` → SSE stream |
 | POST | `/v1/containers/{id}/exec` | runs a command, returns exec id |
 | POST | `/v1/containers/{id}/exec/stream` | runs a command, streams output as SSE (live log) |
@@ -110,7 +118,17 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 | POST | `/v1/images/{ref}/tag?repo=&tag=` | admin |
 | POST | `/v1/images/{ref}/push` | admin |
 | DELETE | `/v1/images/{ref}` | admin |
+| GET | `/v1/images/{ref}/history` | layer history |
+| GET | `/v1/images/{ref}/get` | image tar download |
+| POST | `/v1/images/{ref}/verify` | via `cardinal verify` CLI (admin) |
 | GET | `/v1/images/search?q=` | Docker Hub search |
+
+### System
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/system/df` | `cardinal system df` output |
+| POST | `/v1/system/prune` | unused containers/images (admin) |
+| GET | `/v1/info` | raw cardinal `/info` for `?node=` |
 
 ### Blueprints (from the official registry)
 | Method | Path | Notes |
@@ -123,7 +141,10 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/v1/cluster/health` | this node's cluster health |
-| GET | `/v1/cluster/replicas` | replica list |
+| GET | `/v1/cluster/info` | `cardinal cluster info` output |
+| GET | `/v1/cluster/replicas` | replica/service list (daemon, fallback to CLI) |
+| POST | `/v1/cluster/replicas` | create replica `{service_name, image, …}` (admin) |
+| DELETE | `/v1/cluster/replicas/{id}` | remove replica (admin) |
 | GET | `/v1/cluster/containers` | containers across the cluster view |
 
 ### Services & functions (delegated to `cardinal service` / `cardinal fn` CLI)
@@ -131,7 +152,9 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 |---|---|---|
 | GET | `/v1/services` | list (raw CLI output) |
 | POST | `/v1/services` | create `{name, image, replicas?, ports?, env?}` (admin) |
+| GET | `/v1/services/{name}` | inspect (raw CLI output) |
 | POST | `/v1/services/{name}/scale` | `{replicas}` (admin) |
+| POST | `/v1/services/{name}/update` | `{image?, replicas?}` (admin) |
 | DELETE | `/v1/services/{name}` | remove (admin) |
 | GET | `/v1/functions` | list (raw CLI output) |
 | POST | `/v1/functions` | deploy `{name, image}` (admin) |
@@ -186,7 +209,7 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 
 ```
 cardinal-wings/
-├── go.mod            # module github.com/kuranix/cardinal-wings; no replace needed
+├── go.mod            # module github.com/animesao/cardinal-wings; no replace needed
 ├── main.go
 ├── internal/
 │   ├── config/       # TOML config: keys, roles, bind, TLS, remote nodes

@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kuranix/cardinal-wings/internal/config"
+	"github.com/animesao/cardinal-wings/internal/config"
 )
 
 // Notifier holds the configured webhooks.

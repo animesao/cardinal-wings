@@ -4,7 +4,7 @@ Thank you to everyone who helps improve **cardinal-wings**.
 
 ## Maintainers
 
-- [kuranix](https://github.com/kuranix) — project maintainer and primary author.
+- [animesao](https://github.com/animesao) — project maintainer and primary author.
 
 ## How to contribute
 

@@ -23,7 +23,7 @@ only to wings; wings fans out to every node.
 ## 1. Install wings on the hub
 
 ```bash
-curl -fsSL https://github.com/kuranix/cardinal-wings/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/animesao/cardinal-wings/releases/latest/download/install.sh | bash
 ```
 
 ## 2. Install + start `cardinal serve` on every node

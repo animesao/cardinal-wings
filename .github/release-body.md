@@ -14,7 +14,7 @@
 ## Install
 
 ```bash
-curl -fsSL https://github.com/kuranix/cardinal-wings/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/animesao/cardinal-wings/releases/latest/download/install.sh | bash
 ```
 
 Or download the binary for your platform and run:

@@ -178,6 +178,40 @@ type ExecRequest struct {
 	Tty          bool     `json:"Tty"`
 }
 
+// Top returns the process list inside a running container
+// (cardinal GET /containers/{id}/top?ps_args=aux).
+func (c *Client) Top(ctx context.Context, id, psArgs string) (map[string]interface{}, error) {
+	path := "/containers/" + id + "/top"
+	if psArgs != "" {
+		path += "?ps_args=" + url.QueryEscape(psArgs)
+	}
+	var out map[string]interface{}
+	if err := c.do(ctx, "GET", path, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Wait blocks until the container stops and returns its exit status
+// (cardinal POST /containers/{id}/wait).
+func (c *Client) Wait(ctx context.Context, id string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, "POST", "/containers/"+id+"/wait", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Changes returns the filesystem diff of a container
+// (cardinal GET /containers/{id}/changes).
+func (c *Client) Changes(ctx context.Context, id string) (interface{}, error) {
+	var out interface{}
+	if err := c.do(ctx, "GET", "/containers/"+id+"/changes", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Exec runs a command in a container via cardinal's exec endpoint.
 func (c *Client) Exec(ctx context.Context, id string, req *ExecRequest) (string, error) {
 	var out struct {

@@ -3,8 +3,8 @@ package agent
 import (
 	"strings"
 
-	"github.com/kuranix/cardinal-wings/internal/config"
-	"github.com/kuranix/cardinal-wings/internal/runtime"
+	"github.com/animesao/cardinal-wings/internal/config"
+	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
 // RemoteNode bundles a node's display name and its runtime client.

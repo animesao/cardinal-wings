@@ -33,6 +33,29 @@ func NewClient(base, token string) *Client {
 // Base returns the configured base URL.
 func (c *Client) Base() string { return c.base }
 
+// Proxy performs an authenticated request against cardinal and returns the
+// raw response for streaming (tar exports, image pulls). The caller must
+// close the body.
+func (c *Client) Proxy(ctx context.Context, method, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.hc.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 400 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		resp.Body.Close()
+		return nil, fmt.Errorf("%s %s: status %d: %s", method, path, resp.StatusCode, string(b))
+	}
+	return resp, nil
+}
+
 func (c *Client) do(ctx context.Context, method, path string, body interface{}, out interface{}) error {
 	var rd io.Reader
 	if body != nil {

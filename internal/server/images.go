@@ -3,12 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
-	"github.com/kuranix/cardinal-wings/internal/agent"
-	"github.com/kuranix/cardinal-wings/internal/auth"
-	"github.com/kuranix/cardinal-wings/internal/tasks"
+	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/tasks"
 )
 
 // imageRoutes mounts the Phase 2 image endpoints against the runtime client.
@@ -60,7 +61,7 @@ func splitImagePath(path string) (action, ref string) {
 
 func isImageMutating(action, method string) bool {
 	switch action {
-	case "pull", "tag", "push":
+	case "pull", "tag", "push", "verify":
 		return true
 	}
 	return action == "" && method == http.MethodDelete
@@ -131,6 +132,34 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"pushed": ref})
+
+	case action == "history" && r.Method == http.MethodGet:
+		out, err := c.History(r.Context(), ref)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, ErrUpstream, "history %s: %s", ref, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]interface{}{"history": out})
+
+	case action == "get" && r.Method == http.MethodGet:
+		resp, err := c.Proxy(r.Context(), "GET", "/images/"+ref+"/get")
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, ErrUpstream, "image get %s: %s", ref, err.Error())
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", "application/x-tar")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"image-"+ref+"-export.tar\"")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.Copy(w, resp.Body)
+
+	case action == "verify" && r.Method == http.MethodPost:
+		out, err := agent.Verify(r.Context(), ref)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, ErrUpstream, "verify %s: %s", ref, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"image": ref, "output": out})
 
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

@@ -3,7 +3,7 @@ package server
 import (
 	"net/http"
 
-	"github.com/kuranix/cardinal-wings/internal/agent"
+	"github.com/animesao/cardinal-wings/internal/agent"
 )
 
 // handleEvents streams cardinal container events as SSE. The panel subscribes

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kuranix/cardinal-wings/internal/tasks"
+	"github.com/animesao/cardinal-wings/internal/tasks"
 )
 
 // taskMgr is the process-wide async job manager. Finished tasks are pruned

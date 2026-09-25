@@ -38,6 +38,26 @@ func (c *Client) Replicas(ctx context.Context) (interface{}, error) {
 	return out, nil
 }
 
+// ReplicaCreate creates a service replica on this node
+// (cardinal POST /cluster/replicas).
+func (c *Client) ReplicaCreate(ctx context.Context, req map[string]interface{}) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, "POST", "/cluster/replicas", req, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ReplicaRemove removes a replica container by id
+// (cardinal DELETE /cluster/replicas/{id}).
+func (c *Client) ReplicaRemove(ctx context.Context, id string) (map[string]interface{}, error) {
+	var out map[string]interface{}
+	if err := c.do(ctx, "DELETE", "/cluster/replicas/"+id, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ContainersOnNode lists containers running on this node's cluster view.
 func (c *Client) ContainersOnNode(ctx context.Context) (interface{}, error) {
 	var out interface{}

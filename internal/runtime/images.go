@@ -43,6 +43,16 @@ func (c *Client) RemoveImage(ctx context.Context, ref string) error {
 	return c.do(ctx, "DELETE", "/images/"+ref, nil, nil)
 }
 
+// History returns the layer history of an image
+// (cardinal GET /images/{ref}/history).
+func (c *Client) History(ctx context.Context, ref string) (interface{}, error) {
+	var out interface{}
+	if err := c.do(ctx, "GET", "/images/"+ref+"/history", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TagImage tags an existing image ref with repo and optional tag.
 func (c *Client) TagImage(ctx context.Context, ref, repo, tag string) error {
 	if tag == "" {

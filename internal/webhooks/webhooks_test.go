@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/kuranix/cardinal-wings/internal/config"
+	"github.com/animesao/cardinal-wings/internal/config"
 )
 
 func TestMatches(t *testing.T) {

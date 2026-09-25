@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kuranix/cardinal-wings/internal/runtime"
+	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
 // nodeStatus holds the last observed health of a node.

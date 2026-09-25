@@ -4,7 +4,7 @@
 > is the plan and an early skeleton.
 
 cardinal-wings is a REST API daemon for managing
-[cardinal](https://github.com/kuranix/cardinal) over HTTP. It's the single
+[cardinal](https://github.com/animesao/cardinal) over HTTP. It's the single
 entry point a control-plane / web panel (`cardinal-panel`) talks to instead of
 SSH + CLI — for one host or across the whole cardinal cluster.
 
@@ -39,7 +39,7 @@ REST schema, cross-node routing and streaming — it re-implements nothing.
 
 ```
 cardinal-wings/
-├── go.mod                        # module github.com/kuranix/cardinal-wings (no replace)
+├── go.mod                        # module github.com/animesao/cardinal-wings (no replace)
 ├── main.go                       # flag parsing + boot
 ├── config.example.toml           # documented keys / roles / nodes
 ├── internal/
@@ -54,13 +54,18 @@ cardinal-wings/
 ```
 
 Live v1 endpoints: `/v1/ping`, `/v1/version`, `/v1/self`, `/v1/system/info`
-(dashboard aggregate), `/v1/metrics` (Prometheus, admin), `/v1/events` (SSE
+(dashboard aggregate), `/v1/system/df`, `/v1/system/prune` (admin),
+`/v1/info`, `/v1/metrics` (Prometheus, admin), `/v1/events` (SSE
 container events), `/v1/containers` (list with `?state=`/`?image=`/`?search=`
-filters + `?sort=`/`?limit=`/`?offset=`, create, inspect, lifecycle, stats,
-logs SSE, exec, exec/stream SSE, interactive terminal via SSE+input),
-`/v1/images` (list/inspect/remove/pull with live progress/tag/push/search),
-`/v1/blueprints` (async install/uninstall), `/v1/tasks` (async jobs,
-persisted), `/v1/services`, `/v1/functions`, `/v1/nodes` + `/v1/cluster/*`.
+filters + `?sort=`/`?limit=`/`?offset=`, create, inspect, lifecycle,
+rename, top, wait, changes, export tar, commit, dynamic ports,
+stats, logs SSE, exec, exec/stream SSE, interactive terminal via
+SSE+input/ws, fs, fm, cp, backup, sftp),
+`/v1/images` (list/inspect/remove/pull with live progress/tag/push/search/
+history/get/verify), `/v1/blueprints` (async install/uninstall),
+`/v1/tasks` (async jobs, persisted), `/v1/services` (+inspect/update),
+`/v1/functions`, `/v1/nodes` + `/v1/cluster/*` (health/info/replicas
+create/remove/containers).
 
 An **OpenAPI schema** lives in [docs/openapi.yaml](docs/openapi.yaml) — a
 panel client can be generated from it.
@@ -125,7 +130,7 @@ curl -fsSL https://cardinal.spcfy.eu/downloads/install-wings.sh -o /tmp/install-
 sudo bash /tmp/install-wings.sh
 
 # or straight from GitHub Releases
-curl -fsSL https://github.com/kuranix/cardinal-wings/releases/latest/download/install.sh -o /tmp/install-wings.sh
+curl -fsSL https://github.com/animesao/cardinal-wings/releases/latest/download/install.sh -o /tmp/install-wings.sh
 sudo bash /tmp/install-wings.sh
 ```
 

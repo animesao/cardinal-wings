@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/kuranix/cardinal-wings/internal/agent"
-	"github.com/kuranix/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/animesao/cardinal-wings/internal/auth"
 )
 
 // servicesRoutes mounts /v1/services and /v1/functions. These delegate to the
@@ -33,6 +33,14 @@ func servicesRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 		action, name := splitServicePath(r.URL.Path)
 		if action == "scale" {
 			mw.AdminOnly(http.HandlerFunc(handleServiceScale)).ServeHTTP(w, r)
+			return
+		}
+		if action == "update" {
+			mw.AdminOnly(http.HandlerFunc(handleServiceUpdate)).ServeHTTP(w, r)
+			return
+		}
+		if action == "" && r.Method == http.MethodGet {
+			handleServiceInspect(w, r)
 			return
 		}
 		if action == "remove" || (action == "" && r.Method == http.MethodDelete) {
@@ -65,7 +73,7 @@ func servicesRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 			mw.AdminOnly(http.HandlerFunc(handleFnInvoke)).ServeHTTP(w, r)
 		case action == "invoke" && r.Method == http.MethodPost:
 			mw.AdminOnly(http.HandlerFunc(handleFnInvoke)).ServeHTTP(w, r)
-		case action == "remove" && r.Method == http.MethodDelete:
+		case (action == "" || action == "remove") && r.Method == http.MethodDelete:
 			mw.AdminOnly(http.HandlerFunc(handleFnRemove)).ServeHTTP(w, r)
 		default:
 			writeError(w, http.StatusNotFound, "function not found: "+name)
@@ -195,9 +203,52 @@ func handleFnRemove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, name := splitFnPath(r.URL.Path)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "function name required")
+		return
+	}
 	if err := agent.FnRemove(r.Context(), name); err != nil {
 		writeErr(w, http.StatusBadGateway, ErrUpstream, "fn rm: %s", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"removed": name})
+}
+
+func handleServiceInspect(w http.ResponseWriter, r *http.Request) {
+	_, name := splitServicePath(r.URL.Path)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "service name required")
+		return
+	}
+	out, err := agent.ServiceInspect(r.Context(), name)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "service inspect: %s", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"name": name, "output": out})
+}
+
+func handleServiceUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	_, name := splitServicePath(r.URL.Path)
+	var req struct {
+		Image    string `json:"image"`
+		Replicas *int   `json:"replicas"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if req.Image == "" && req.Replicas == nil {
+		writeError(w, http.StatusBadRequest, "image or replicas required")
+		return
+	}
+	if err := agent.ServiceUpdate(r.Context(), name, req.Image, req.Replicas); err != nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "service update: %s", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"name": name, "status": "updated"})
 }

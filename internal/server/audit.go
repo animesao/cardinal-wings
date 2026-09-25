@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/kuranix/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/auth"
 )
 
 // auditLog appends one JSONL line per mutating request (POST/DELETE). It is

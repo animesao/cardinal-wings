@@ -78,6 +78,24 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 curl -N -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"Cmd":["tail","-f","/var/log/app.log"]}' \
   localhost:8080/v1/containers/<id>/exec/stream
+
+# Rename / top / wait / changes / export (top/changes/export are reads)
+curl -X POST -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/rename?name=web2"
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/top?ps_args=aux"
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/wait
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/changes
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/export -o container.tar
+
+# Commit an image from a container (admin)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"repo":"myapp","tag":"v1"}' localhost:8080/v1/containers/<id>/commit
+
+# Dynamic ports (admin for add/remove)
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/ports
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"mapping":"443:80/tcp"}' localhost:8080/v1/containers/<id>/ports/add
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"mapping":"443/tcp"}' localhost:8080/v1/containers/<id>/ports/remove
 ```
 
 ## SFTP
@@ -142,6 +160,24 @@ curl -X POST -H "Authorization: Bearer KEY" "localhost:8080/v1/images/myreg/ngin
 
 # Remove (admin)
 curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/images/nginx:latest
+
+# History / download / offline verify
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/images/nginx:latest/history
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/images/nginx:latest/get -o image.tar
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/images/nginx:latest/verify
+```
+
+## System
+
+```bash
+# Disk usage (cardinal system df)
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/system/df
+
+# Prune unused containers/images (admin)
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/system/prune
+
+# Raw cardinal /info for a node
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/info?node=local"
 ```
 
 ## Blueprints
@@ -184,6 +220,11 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"replicas":3}' localhost:8080/v1/services/web/scale
 
+# Inspect / update (admin for update)
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/services/web
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"replicas":3}' localhost:8080/v1/services/web/update
+
 curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/services/web
 
 # Functions
@@ -203,8 +244,14 @@ curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/functions/hello
 
 ```bash
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/health
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/info
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/replicas
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/containers
+
+# Replicas create/remove (admin)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"service_name":"web","image":"nginx:alpine"}' localhost:8080/v1/cluster/replicas
+curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/replicas/<id>
 ```
 
 ## Config

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/kuranix/cardinal-wings/internal/auth"
-	"github.com/kuranix/cardinal-wings/internal/runtime"
+	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
 // containerRoutes mounts the container endpoints. Every handler routes to the
@@ -157,9 +157,9 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp", "limits", "update":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait":
 		return true
-	case "sftp":
+	case "sftp", "ports":
 		return method != http.MethodGet
 	}
 	// Backup restore (POST) uploads an archive into the container — mutating.
@@ -402,6 +402,30 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"id": ref, "action": action, "ok": "true"})
+
+	case action == "rename" && r.Method == http.MethodPost:
+		handleContainerRename(w, r, ref, c)
+
+	case action == "top" && r.Method == http.MethodGet:
+		handleContainerTop(w, r, ref, c)
+
+	case action == "wait" && r.Method == http.MethodPost:
+		handleContainerWait(w, r, ref, c)
+
+	case action == "changes" && r.Method == http.MethodGet:
+		handleContainerChanges(w, r, ref, c)
+
+	case action == "export" && r.Method == http.MethodGet:
+		handleContainerExport(w, r, ref, c)
+
+	case action == "commit" && r.Method == http.MethodPost:
+		handleContainerCommit(w, r, ref)
+
+	case action == "ports" && r.Method == http.MethodGet:
+		handleContainerPortsShow(w, r, ref)
+
+	case (action == "ports/add" || action == "ports/remove") && r.Method == http.MethodPost:
+		handleContainerPortsMut(w, r, ref, action)
 
 	case action == "" && r.Method == http.MethodDelete:
 		force := r.URL.Query().Get("force") == "1"

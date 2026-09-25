@@ -425,6 +425,148 @@ paths:
       summary: Remove a function (admin)
       parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
       responses: { "200": { description: removed } }
+  /v1/containers/{id}/rename:
+    post:
+      tags: [containers]
+      summary: Rename a container (admin)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+      responses: { "200": { description: renamed } }
+  /v1/containers/{id}/top:
+    get:
+      tags: [containers]
+      summary: Process list inside a container
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: ps_args, in: query, schema: { type: string } }
+      responses: { "200": { description: top } }
+  /v1/containers/{id}/wait:
+    post:
+      tags: [containers]
+      summary: Wait until the container stops (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: exit status } }
+  /v1/containers/{id}/changes:
+    get:
+      tags: [containers]
+      summary: Filesystem changes of a container
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: changes } }
+  /v1/containers/{id}/export:
+    get:
+      tags: [containers]
+      summary: Export the container filesystem as tar
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: tar archive } }
+  /v1/containers/{id}/commit:
+    post:
+      tags: [containers]
+      summary: Create an image from a container (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                repo: { type: string }
+                tag: { type: string }
+                ref: { type: string }
+      responses: { "201": { description: committed } }
+  /v1/containers/{id}/ports:
+    get:
+      tags: [containers]
+      summary: Show port mappings
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: ports } }
+  /v1/containers/{id}/ports/add:
+    post:
+      tags: [containers]
+      summary: Add a port mapping without restart (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mapping: { type: string }
+      responses: { "200": { description: added } }
+  /v1/containers/{id}/ports/remove:
+    post:
+      tags: [containers]
+      summary: Remove a port mapping (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mapping: { type: string }
+      responses: { "200": { description: removed } }
+  /v1/images/{ref}/history:
+    get:
+      tags: [images]
+      summary: Image layer history
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: history } }
+  /v1/images/{ref}/get:
+    get:
+      tags: [images]
+      summary: Download an image as tar
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: tar archive } }
+  /v1/images/{ref}/verify:
+    post:
+      tags: [images]
+      summary: Verify image digests offline (admin)
+      parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: verification output } }
+  /v1/system/df:
+    get:
+      tags: [system]
+      summary: Disk usage by images, containers, volumes
+      responses: { "200": { description: df output } }
+  /v1/system/prune:
+    post:
+      tags: [system]
+      summary: Remove unused containers and images (admin)
+      responses: { "200": { description: pruned } }
+  /v1/info:
+    get:
+      tags: [system]
+      summary: Raw cardinal /info for a node
+      parameters: [{ name: node, in: query, schema: { type: string } }]
+      responses: { "200": { description: info } }
+  /v1/services/{name}:
+    get:
+      tags: [services]
+      summary: Inspect a service
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: service } }
+  /v1/services/{name}/update:
+    post:
+      tags: [services]
+      summary: Update a service image/replicas (admin)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                image: { type: string }
+                replicas: { type: integer }
+      responses: { "200": { description: updated } }
   /v1/cluster/health:
     get:
       tags: [cluster]
@@ -435,6 +577,31 @@ paths:
       tags: [cluster]
       summary: Replica list
       responses: { "200": { description: replicas } }
+    post:
+      tags: [cluster]
+      summary: Create a replica (admin)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image]
+              properties:
+                service_name: { type: string }
+                image: { type: string }
+                replica_id: { type: string }
+      responses: { "201": { description: created } }
+  /v1/cluster/replicas/{id}:
+    delete:
+      tags: [cluster]
+      summary: Remove a replica (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/cluster/info:
+    get:
+      tags: [cluster]
+      summary: Cluster overview (cardinal cluster info)
+      responses: { "200": { description: info } }
   /v1/cluster/containers:
     get:
       tags: [cluster]

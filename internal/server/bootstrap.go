@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/kuranix/cardinal-wings/internal/agent"
-	"github.com/kuranix/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/animesao/cardinal-wings/internal/auth"
 )
 
 // bootstrapRoutes exposes a narrow administrative operation instead of a

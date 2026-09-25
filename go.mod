@@ -1,4 +1,4 @@
-module github.com/kuranix/cardinal-wings
+module github.com/animesao/cardinal-wings
 
 go 1.26
 
