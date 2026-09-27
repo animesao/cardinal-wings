@@ -51,4 +51,10 @@ bash -n install.sh  # installer syntax
 
 ## Licensing
 
-MIT. Contributor attribution is maintained here and in git history.
+AGPL-3.0-or-later (see LICENSE). Contributor attribution is maintained
+here and in git history.
+
+By contributing you agree your contribution is made under the same
+AGPL-3.0-or-later terms. A future separate Commercial License / CLA for
+dual licensing is tracked as a separate step and does not exist yet —
+no contributor is assumed to have agreed to one.

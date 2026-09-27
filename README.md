@@ -153,4 +153,13 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution guide and
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU Affero General Public License v3.0 or later — see [LICENSE](LICENSE).
+
+* License: AGPL-3.0-or-later — [LICENSE](LICENSE)
+* Attribution: [NOTICE](NOTICE)
+* Brand policy: [TRADEMARKS.md](TRADEMARKS.md)
+* Commercial model (incl. dual licensing): [COMMERCIAL.md](COMMERCIAL.md)
+
+cardinal-wings is a separate project of the Cardinal ecosystem.
+cardinal itself is licensed differently (Apache-2.0) — see
+[animesao/cardinal](https://github.com/animesao/cardinal).
