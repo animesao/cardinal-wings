@@ -584,7 +584,7 @@ paths:
       tags: [tasks]
       summary: Re-run a finished task (admin, same process lifetime)
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { "202": { description: new task }, "404": { description: not found, still running, or not retryable } }
+      responses: { "202": { description: new task }, "404": { description: "not found, still running, or not retryable" } }
   /v1/networks:
     get:
       tags: [networks]
