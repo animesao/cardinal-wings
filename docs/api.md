@@ -278,6 +278,34 @@ curl -H "Authorization: Bearer KEY" localhost:8080/v1/tasks
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/tasks/task-5
 # → {"id":"task-5","kind":"blueprint_install","status":"succeeded",
 #    "created_at":"…","started_at":"…","finished_at":"…","output":"…"}
+
+# Cancel a queued/running task (admin)
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/tasks/task-5/cancel
+
+# Re-run a finished task (admin) — returns the new task
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/tasks/task-5/retry
+```
+
+## Networks & volumes (local node only, raw CLI output)
+
+```bash
+# Networks
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/networks
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"name":"mynet","subnet":"10.10.0.0/24"}' localhost:8080/v1/networks
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/networks/mynet
+curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/networks/mynet
+
+# Volumes
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/volumes
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"name":"data","driver":"local","labels":{"app":"web"}}' localhost:8080/v1/volumes
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/volumes/data
+curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/volumes/data
+curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/volumes/prune
+
+# Remote nodes (?node=) answer 501 — networks/volumes have no serve API,
+# the CLI only manages the local host.
 ```
 
 ## Services & functions (delegated to cardinal CLI)

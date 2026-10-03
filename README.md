@@ -63,7 +63,8 @@ stats, logs SSE, exec, exec/stream SSE, interactive terminal via
 SSE+input/ws, fs, fm, cp, backup, sftp),
 `/v1/images` (list/inspect/remove/pull with live progress/tag/push/search/
 history/get/verify), `/v1/blueprints` (async install/uninstall),
-`/v1/tasks` (async jobs, persisted), `/v1/services` (+inspect/update),
+`/v1/tasks` (async jobs, persisted, cancel/retry), `/v1/networks` + `/v1/volumes`
+(local node only, via CLI), `/v1/services` (+inspect/update),
 `/v1/functions`, `/v1/nodes` + `/v1/cluster/*` (health/info/replicas
 create/remove/containers).
 

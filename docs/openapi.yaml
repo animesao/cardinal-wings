@@ -551,6 +551,82 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Task" }
+  /v1/tasks/{id}/cancel:
+    post:
+      tags: [tasks]
+      summary: Cancel a queued/running task (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: canceled task }, "404": { description: not found or already finished } }
+  /v1/tasks/{id}/retry:
+    post:
+      tags: [tasks]
+      summary: Re-run a finished task (admin, same process lifetime)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "202": { description: new task }, "404": { description: not found, still running, or not retryable } }
+  /v1/networks:
+    get:
+      tags: [networks]
+      summary: List local networks (local node only, raw CLI output)
+      responses: { "200": { description: network list } }
+    post:
+      tags: [networks]
+      summary: Create a network (admin, local node only)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                subnet: { type: string }
+      responses: { "201": { description: created }, "501": { description: remote node } }
+  /v1/networks/{name}:
+    get:
+      tags: [networks]
+      summary: Inspect a network (local node only)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: network } }
+    delete:
+      tags: [networks]
+      summary: Remove a network (admin, local node only)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/volumes:
+    get:
+      tags: [volumes]
+      summary: List local volumes (local node only, raw CLI output)
+      responses: { "200": { description: volume list } }
+    post:
+      tags: [volumes]
+      summary: Create a volume (admin, local node only)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string }
+                driver: { type: string }
+                labels: { type: object, additionalProperties: { type: string } }
+      responses: { "201": { description: created }, "501": { description: remote node } }
+  /v1/volumes/{name}:
+    get:
+      tags: [volumes]
+      summary: Inspect a volume (local node only)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: volume } }
+    delete:
+      tags: [volumes]
+      summary: Remove a volume (admin, local node only)
+      parameters: [{ name: name, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: removed } }
+  /v1/volumes/prune:
+    post:
+      tags: [volumes]
+      summary: Remove unused volumes (admin, local node only)
+      responses: { "200": { description: pruned } }
   /v1/services:
     get:
       tags: [services]
@@ -878,7 +954,7 @@ components:
       properties:
         id: { type: string }
         kind: { type: string }
-        status: { type: string, enum: [queued, running, succeeded, failed] }
+        status: { type: string, enum: [queued, running, succeeded, failed, canceled] }
         created_at: { type: string }
         started_at: { type: string }
         finished_at: { type: string }
