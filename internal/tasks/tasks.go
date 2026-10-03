@@ -22,6 +22,7 @@ const (
 	StatusRunning   Status = "running"
 	StatusSucceeded Status = "succeeded"
 	StatusFailed    Status = "failed"
+	StatusCanceled  Status = "canceled"
 ) // Task is one async operation.
 type Task struct {
 	Seq        uint64    `json:"-"`
@@ -38,13 +39,19 @@ type Task struct {
 
 // Manager runs and tracks async tasks.
 type Manager struct {
-	mu         sync.Mutex
-	tasks      map[string]*Task
-	seq        uint64
-	ttl        time.Duration
-	path       string // optional JSON persistence file
+	mu      sync.Mutex
+	tasks   map[string]*Task
+	cancels map[string]context.CancelFunc
+	jobs    map[string]jobFunc
+	seq     uint64
+	ttl     time.Duration
+	path    string // optional JSON persistence file
 	onComplete func(Task)
 }
+
+// jobFunc is the re-runnable body of a task. It is kept in memory only
+// (never persisted), so Retry works within the process lifetime.
+type jobFunc func(ctx context.Context, t *Task)
 
 // OnComplete registers a callback invoked (with a copy) when any task
 // finishes. Used by wings to fire webhooks and notify panels.
@@ -57,7 +64,7 @@ func (m *Manager) OnComplete(fn func(Task)) {
 // NewManager builds a task manager; ttl controls how long finished tasks are
 // kept before cleanup (0 keeps them forever).
 func NewManager(ttl time.Duration) *Manager {
-	return &Manager{tasks: map[string]*Task{}, ttl: ttl}
+	return &Manager{tasks: map[string]*Task{}, cancels: map[string]context.CancelFunc{}, jobs: map[string]jobFunc{}, ttl: ttl}
 }
 
 // WithPersistence writes finished tasks to path so they survive a daemon
@@ -120,52 +127,128 @@ func (m *Manager) SubmitLines(kind string, fn func(ctx context.Context, onLine P
 }
 
 func (m *Manager) submit(kind string, fnLines func(ctx context.Context, onLine ProgressFunc) (string, error), fn func(ctx context.Context) (string, error)) string {
+	var job jobFunc
+	if fnLines != nil {
+		job = func(ctx context.Context, t *Task) {
+			out, err := fnLines(ctx, func(line string) {
+				m.mu.Lock()
+				t.Progress = append(t.Progress, line)
+				m.mu.Unlock()
+			})
+			m.finish(t, out, err)
+		}
+	} else {
+		job = func(ctx context.Context, t *Task) {
+			out, err := fn(ctx)
+			m.finish(t, out, err)
+		}
+	}
+	return m.submitJob(kind, job)
+}
+
+func (m *Manager) submitJob(kind string, job jobFunc) string {
 	m.mu.Lock()
 	m.seq++
 	id := fmt.Sprintf("task-%d", m.seq)
 	t := &Task{Seq: m.seq, ID: id, Kind: kind, Status: StatusQueued, CreatedAt: time.Now()}
 	m.tasks[id] = t
+	m.jobs[id] = job
 	m.mu.Unlock()
 
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		m.mu.Lock()
-		t.Status = StatusRunning
-		t.StartedAt = time.Now()
-		m.mu.Unlock()
-
-		var out string
-		var err error
-		if fnLines != nil {
-			out, err = fnLines(ctx, func(line string) {
-				m.mu.Lock()
-				t.Progress = append(t.Progress, line)
-				m.mu.Unlock()
-			})
-		} else {
-			out, err = fn(ctx)
-		}
-
-		m.mu.Lock()
-		t.FinishedAt = time.Now()
-		if err != nil {
-			t.Status = StatusFailed
-			t.Error = err.Error()
-		} else {
-			t.Status = StatusSucceeded
-			t.Output = out
-		}
-		m.saveLocked()
-		complete := *t
-		cb := m.onComplete
-		m.mu.Unlock()
-		if cb != nil {
-			cb(complete)
-		}
-	}()
-
+	go m.run(id)
 	return id
+}
+
+func (m *Manager) run(id string) {
+	m.mu.Lock()
+	t, ok := m.tasks[id]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.cancels[id] = cancel
+	t.Status = StatusRunning
+	t.StartedAt = time.Now()
+	job := m.jobs[id]
+	m.mu.Unlock()
+
+	defer cancel()
+	job(ctx, t)
+}
+
+// finish records the outcome, unless the task was already canceled via
+// Cancel (which owns the status, persistence and callback in that case).
+func (m *Manager) finish(t *Task, out string, err error) {
+	m.mu.Lock()
+	if t.Status == StatusCanceled {
+		delete(m.cancels, t.ID)
+		m.saveLocked()
+		m.mu.Unlock()
+		return
+	}
+	t.FinishedAt = time.Now()
+	if err != nil {
+		t.Status = StatusFailed
+		t.Error = err.Error()
+	} else {
+		t.Status = StatusSucceeded
+		t.Output = out
+	}
+	delete(m.cancels, t.ID)
+	m.saveLocked()
+	complete := *t
+	cb := m.onComplete
+	m.mu.Unlock()
+	if cb != nil {
+		cb(complete)
+	}
+}
+
+// Cancel requests cancellation of a queued or running task. It reports
+// whether a live task was found. The task's context is cancelled so a
+// cooperative job stops promptly; the status becomes "canceled".
+func (m *Manager) Cancel(id string) bool {
+	m.mu.Lock()
+	t, ok := m.tasks[id]
+	if !ok || !t.FinishedAt.IsZero() || t.Status == StatusCanceled {
+		m.mu.Unlock()
+		return false
+	}
+	t.Status = StatusCanceled
+	t.FinishedAt = time.Now()
+	t.Error = "canceled"
+	if cancel, ok := m.cancels[id]; ok {
+		cancel()
+	}
+	m.saveLocked()
+	complete := *t
+	cb := m.onComplete
+	m.mu.Unlock()
+	if cb != nil {
+		cb(complete)
+	}
+	return true
+}
+
+// Retry re-runs a finished task (succeeded, failed or canceled) and
+// returns the new task id. It reports false for unknown ids, live tasks,
+// or tasks restored from disk (their job body lives in memory only).
+func (m *Manager) Retry(id string) (string, bool) {
+	m.mu.Lock()
+	t, ok := m.tasks[id]
+	if !ok || t.FinishedAt.IsZero() || t.Status == StatusQueued || t.Status == StatusRunning {
+		m.mu.Unlock()
+		return "", false
+	}
+	job, ok := m.jobs[id]
+	if !ok || job == nil {
+		m.mu.Unlock()
+		return "", false
+	}
+	kind := t.Kind
+	m.mu.Unlock()
+	return m.submitJob(kind, job), true
 }
 
 // Get returns a copy of a task, or nil.

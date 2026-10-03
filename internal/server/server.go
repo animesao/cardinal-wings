@@ -90,7 +90,7 @@ func Run(cfg *config.Config) error {
 	api.HandleFunc("/v1/metrics", handleMetrics)
 	api.HandleFunc("/v1/events", handleEvents)
 	api.HandleFunc("/v1/sftp/info", handleSftpInfo)
-	tasksRoutes(api)
+	tasksRoutes(api, mw)
 	containerRoutes(api, mw)
 	imageRoutes(api, mw)
 	blueprintRoutes(api, mw)
