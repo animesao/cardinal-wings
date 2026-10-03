@@ -9,11 +9,14 @@ import (
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/runtime"
 	"github.com/animesao/cardinal-wings/internal/tasks"
 )
 
 // imageRoutes mounts the Phase 2 image endpoints against the runtime client.
 func imageRoutes(mux *http.ServeMux, mw *auth.Middleware) {
+	mux.HandleFunc("/v1/images/search", handleImageSearch)
+
 	mux.HandleFunc("/v1/images", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
@@ -67,6 +70,26 @@ func isImageMutating(action, method string) bool {
 	return action == "" && method == http.MethodDelete
 }
 
+// handleImageSearch serves GET /v1/images/search?q=. It talks directly to
+// Docker Hub (not via cardinal serve), so it needs no node client.
+func handleImageSearch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	q := r.URL.Query().Get("q")
+	if q == "" {
+		writeError(w, http.StatusBadRequest, "q query param required")
+		return
+	}
+	results, err := runtime.NewClient("", "").SearchImages(r.Context(), q)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "search %s: %s", q, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"query": q, "results": results})
+}
+
 func handleImageRef(w http.ResponseWriter, r *http.Request) {
 	action, ref := splitImagePath(r.URL.Path)
 	if ref == "" {
@@ -76,6 +99,10 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 
 	c, ok := clientFor(w, r)
 	if !ok {
+		return
+	}
+	if c == nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "local cardinal unavailable")
 		return
 	}
 
