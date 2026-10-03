@@ -401,6 +401,10 @@ func decodeBody(r *http.Request) map[string]interface{} {
 func handleFm(w http.ResponseWriter, r *http.Request, id string) {
 	_, action := splitRef(r.URL.Path)
 	switch {
+	case strings.HasPrefix(action, "fm/download-zip"):
+		handleFmDownloadZip(w, r, id)
+	case strings.HasPrefix(action, "fm/upload-zip"):
+		handleFmUploadZip(w, r, id)
 	case strings.HasPrefix(action, "fm/list"):
 		handleFmList(w, r, id)
 	case strings.HasPrefix(action, "fm/read"):
@@ -458,6 +462,84 @@ func handleFmList(w http.ResponseWriter, r *http.Request, id string) {
 		result = append(result, fmEntry{Type: typ, Size: info.Size(), ModTime: info.ModTime().Unix(), Name: entry.Name()})
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"path": requestPath, "entries": result})
+}
+
+func handleFmDownloadZip(w http.ResponseWriter, r *http.Request, id string) {
+	session, err := beginFMSession(id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "fm/download-zip: %s", err.Error())
+		return
+	}
+	defer session.Close()
+
+	requestPath, ok := pathArg(r, nil, "path")
+	if !ok || requestPath == "" {
+		requestPath = "/"
+	}
+	dir, err := session.resolve(requestPath, false)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, ErrNotFound, "path not found: %s", requestPath)
+		return
+	}
+	if info, err := os.Stat(dir); err != nil || !info.IsDir() {
+		writeError(w, http.StatusBadRequest, "path is not a directory: "+requestPath)
+		return
+	}
+	data, err := zipDir(dir)
+	if err != nil {
+		if strings.Contains(err.Error(), "exceeds") || strings.Contains(err.Error(), "too many") {
+			writeError(w, http.StatusRequestEntityTooLarge, "directory too large for zip download")
+			return
+		}
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "zip %s: %s", requestPath, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"path":    requestPath,
+		"content": base64.StdEncoding.EncodeToString(data),
+		"size":    len(data),
+		"binary":  true,
+		"format":  "zip",
+	})
+}
+
+func handleFmUploadZip(w http.ResponseWriter, r *http.Request, id string) {
+	session, err := beginFMSession(id)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "fm/upload-zip: %s", err.Error())
+		return
+	}
+	defer session.Close()
+
+	body := decodeBody(r)
+	requestPath, ok := pathArg(r, body, "path")
+	if !ok || requestPath == "" {
+		requestPath = "/"
+	}
+	contentB64, _ := body["content"].(string)
+	data, err := base64.StdEncoding.DecodeString(contentB64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "content must be base64")
+		return
+	}
+	target, err := session.resolve(requestPath, true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, ErrBadRequest, "invalid path: %s", requestPath)
+		return
+	}
+	if err := os.MkdirAll(target, 0755); err != nil {
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "create destination: %s", err.Error())
+		return
+	}
+	if err := unzipInto(data, target); err != nil {
+		if strings.Contains(err.Error(), "unsafe entry") || strings.Contains(err.Error(), "exceeds") || strings.Contains(err.Error(), "too many") {
+			writeError(w, http.StatusBadRequest, "invalid archive: "+err.Error())
+			return
+		}
+		writeErr(w, http.StatusBadGateway, ErrUpstream, "unzip %s: %s", requestPath, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "path": requestPath, "size": len(data)})
 }
 
 func handleFmRead(w http.ResponseWriter, r *http.Request, id string, download bool) {

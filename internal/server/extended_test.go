@@ -7,13 +7,13 @@ import (
 )
 
 func TestIsMutatingNewActions(t *testing.T) {
-	mutating := []string{"rename", "commit", "ports/add", "ports/remove", "wait"}
+	mutating := []string{"rename", "commit", "ports/add", "ports/remove", "wait", "fm/upload-zip"}
 	for _, a := range mutating {
 		if !isMutating(a, http.MethodPost) {
 			t.Errorf("isMutating(%q, POST) = false, want true", a)
 		}
 	}
-	reads := []string{"top", "changes", "export", "ports"}
+	reads := []string{"top", "changes", "export", "ports", "fm/download-zip"}
 	for _, a := range reads {
 		if isMutating(a, http.MethodGet) {
 			t.Errorf("isMutating(%q, GET) = true, want false (read)", a)

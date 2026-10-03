@@ -302,6 +302,28 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string } }
         - { name: path, in: query, schema: { type: string } }
       responses: { "200": { description: base64 content } }
+  /v1/containers/{id}/fm/download-zip:
+    get:
+      tags: [containers]
+      summary: File manager download directory as zip (base64, max 100 MiB)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: path, in: query, schema: { type: string } }
+      responses: { "200": { description: base64 zip }, "413": { description: directory too large } }
+  /v1/containers/{id}/fm/upload-zip:
+    post:
+      tags: [containers]
+      summary: File manager extract zip archive into directory (admin, zip-slip checked)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path: { type: string }
+                content: { type: string }
+      responses: { "200": { description: extracted } }
   /v1/containers/{id}/fm/write:
     post:
       tags: [containers]

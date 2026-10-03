@@ -146,6 +146,11 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"path":"/app/run.sh","mode":"755"}' localhost:8080/v1/containers/<id>/fm/chmod
 
+# Directory as zip (read) / extract zip into directory (admin)
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/download-zip?path=/data/worlds"
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"path":"/data","content":"<base64 zip>"}' localhost:8080/v1/containers/<id>/fm/upload-zip
+
 # Copy host <-> container (admin, {src, dst} like `cardinal cp`)
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"src":"./index.html","dst":"web:/usr/share/nginx/html/index.html"}' \
