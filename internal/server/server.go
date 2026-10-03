@@ -93,6 +93,8 @@ func Run(cfg *config.Config) error {
 	tasksRoutes(api, mw)
 	containerRoutes(api, mw)
 	imageRoutes(api, mw)
+	networksRoutes(api, mw)
+	volumesRoutes(api, mw)
 	blueprintRoutes(api, mw)
 	servicesRoutes(api, mw)
 	bootstrapRoutes(api, mw)
