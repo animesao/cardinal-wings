@@ -242,6 +242,21 @@ paths:
               properties:
                 data: { type: string }
       responses: { "200": { description: ok } }
+  /v1/containers/{id}/terminal/resize:
+    post:
+      tags: [containers]
+      summary: Record the panel viewport for the session (admin, 1..1000)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cols, rows]
+              properties:
+                cols: { type: integer }
+                rows: { type: integer }
+      responses: { "200": { description: session with cols and rows } }
   /v1/containers/{id}/terminal/stream:
     get:
       tags: [containers]

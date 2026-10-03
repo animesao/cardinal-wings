@@ -13,6 +13,15 @@ import (
 	"github.com/animesao/cardinal-wings/internal/ws"
 )
 
+// Default terminal dimensions (conventional fallback until the panel
+// reports its real viewport via resize).
+const (
+	defaultTermCols = 80
+	defaultTermRows = 24
+	maxTermCols     = 1000
+	maxTermRows     = 1000
+)
+
 // terminalSession is one console session attached to a container's main
 // process. Output chunks are kept in a small ring buffer (so late SSE
 // subscribers see recent output) and broadcast to live subscribers.
@@ -26,6 +35,8 @@ type terminalSession struct {
 	ring      []string
 	subs      map[chan string]struct{}
 	generated uint64
+	cols      int
+	rows      int
 }
 
 // terminalManager tracks live terminal sessions per container id.
@@ -48,6 +59,8 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 		done:    make(chan struct{}),
 		cancel:  cancel,
 		subs:    map[chan string]struct{}{},
+		cols:    defaultTermCols,
+		rows:    defaultTermRows,
 	}
 
 	// Publish the session before starting cardinal attach. Otherwise a very
@@ -196,6 +209,45 @@ func (s *terminalSession) writeInput(data string) error {
 	}
 }
 
+// setSize records the panel viewport for the session. There is no PTY to
+// resize here — the session attaches to the container main-process console,
+// which has no window-size ioctl — but the stored size lets the panel render
+// correctly and travels with the session for future pty-backed exec.
+func (s *terminalSession) setSize(cols, rows int) error {
+	if cols < 1 || rows < 1 || cols > maxTermCols || rows > maxTermRows {
+		return io.ErrShortWrite
+	}
+	s.mu.Lock()
+	s.cols, s.rows = cols, rows
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *terminalSession) size() (cols, rows int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cols, s.rows
+}
+
+// parseWSInput separates panel control messages from stdin. A text frame
+// that is exactly {"type":"resize","cols":N,"rows":M} with valid dimensions
+// is a resize; everything else (including almost-JSON typed at the game
+// console) goes to stdin verbatim.
+func parseWSInput(msg []byte) (isResize bool, cols, rows int) {
+	var ctl struct {
+		Type string `json:"type"`
+		Cols int    `json:"cols"`
+		Rows int    `json:"rows"`
+	}
+	if err := json.Unmarshal(msg, &ctl); err != nil {
+		return false, 0, 0
+	}
+	if ctl.Type != "resize" || ctl.Cols < 1 || ctl.Rows < 1 || ctl.Cols > maxTermCols || ctl.Rows > maxTermRows {
+		return false, 0, 0
+	}
+	return true, ctl.Cols, ctl.Rows
+}
+
 func handleTerminalOpen(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -206,11 +258,40 @@ func handleTerminalOpen(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "missing container id")
 		return
 	}
-	if _, err := terminals.open(r.Context(), id); err != nil {
+	sess, err := terminals.open(r.Context(), id)
+	if err != nil {
 		writeErr(w, http.StatusInternalServerError, ErrInternal, "terminal: %s", err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"session": id, "shell": "attach"})
+	cols, rows := sess.size()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"session": id, "shell": "attach", "cols": cols, "rows": rows})
+}
+
+func handleTerminalResize(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	id := terminalID(r)
+	s := terminals.get(id)
+	if s == nil {
+		writeErr(w, http.StatusNotFound, ErrNotFound, "no terminal session for container: %s", id)
+		return
+	}
+	var req struct {
+		Cols int `json:"cols"`
+		Rows int `json:"rows"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if err := s.setSize(req.Cols, req.Rows); err != nil {
+		writeError(w, http.StatusBadRequest, "cols/rows must be 1..1000")
+		return
+	}
+	cols, rows := s.size()
+	writeJSON(w, http.StatusOK, map[string]interface{}{"session": id, "cols": cols, "rows": rows})
 }
 
 func handleTerminalInput(w http.ResponseWriter, r *http.Request) {
@@ -356,10 +437,15 @@ func handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 	// Websocket input -> session stdin. ReadText consumes control frames and
 	// replies to ping/close internally, so only actual data reaches stdin.
+	// A {"type":"resize",...} frame is a viewport update, not stdin.
 	for {
 		msg, err := conn.ReadText()
 		if err != nil {
 			return
+		}
+		if ok, cols, rows := parseWSInput(msg); ok {
+			_ = sess.setSize(cols, rows)
+			continue
 		}
 		if err := sess.writeInput(string(msg)); err != nil {
 			return

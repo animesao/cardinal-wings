@@ -157,7 +157,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/resize", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait":
 		return true
 	case "sftp", "ports":
 		return method != http.MethodGet
@@ -371,6 +371,9 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 
 	case action == "terminal/input" && r.Method == http.MethodPost:
 		handleTerminalInput(w, r)
+
+	case action == "terminal/resize" && r.Method == http.MethodPost:
+		handleTerminalResize(w, r)
 
 	case action == "terminal/stream" && r.Method == http.MethodGet:
 		handleTerminalStream(w, r)

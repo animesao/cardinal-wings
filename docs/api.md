@@ -113,11 +113,16 @@ curl -N -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/stats?
 ```bash
 # Open a session attached to the container's main process
 curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/terminal
-# → {"session":"...","shell":"attach"}
+# → {"session":"...","shell":"attach","cols":80,"rows":24}
 
 # Feed stdin
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"data":"ls -la\n"}' localhost:8080/v1/containers/<id>/terminal/input
+
+# Record the panel viewport (admin)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"cols":120,"rows":40}' localhost:8080/v1/containers/<id>/terminal/resize
+# WS control frame (not stdin): {"type":"resize","cols":120,"rows":40}
 
 # Read output as SSE, or raw duplex over websocket
 curl -N -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/terminal/stream
