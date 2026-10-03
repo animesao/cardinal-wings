@@ -161,8 +161,26 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 | POST | `/v1/functions/{name}` · `/v1/functions/{name}/invoke` | call `{data?}` (admin) |
 | DELETE | `/v1/functions/{name}` | remove (admin) |
 
-### Not yet exposed (future)
-- `/v1/tasks` — async job status for long-running installs.
+### Tasks (async jobs, persisted to $WINGS_DATA_DIR/wings-tasks.json)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/tasks` | list (auto-prunes finished older than 1h) |
+| GET | `/v1/tasks/{id}` | poll one job (`queued|running|succeeded|failed`) |
+
+### Streaming / terminal / files (live, all present in code + openapi)
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/v1/containers/{id}/logs?tail=&follow=1` | `follow=1` → SSE (polls serve logs) |
+| POST | `/v1/containers/{id}/exec` · `/exec/stream` | run command / stream as SSE |
+| POST | `/v1/containers/{id}/terminal` + `/terminal/input` + `/terminal/stream` (SSE) + `/terminal/ws` | interactive attach-console |
+| GET | `/v1/containers/{id}/stats?stream=1` | one-shot or SSE |
+| GET | `/v1/containers/{id}/fs/ls\|cat\|tree` · `POST .../cp` | host↔container copy |
+| ANY | `/v1/containers/{id}/fm/list\|read\|download\|write\|upload\|mkdir\|rm\|move\|chmod` | jailed file manager |
+| GET\|POST | `/v1/containers/{id}/backup` | download tar.gz / restore |
+| GET\|PUT\|DELETE | `/v1/containers/{id}/sftp` | per-container SFTP creds; `GET /v1/sftp/info` global |
+| GET | `/v1/events` | SSE container events |
+| GET | `/v1/metrics` | Prometheus (admin) |
+| POST | `/v1/bootstrap/ensure` | ensure supervisor (admin) |
 
 ## Security model
 
