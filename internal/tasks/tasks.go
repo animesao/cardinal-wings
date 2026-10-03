@@ -39,13 +39,13 @@ type Task struct {
 
 // Manager runs and tracks async tasks.
 type Manager struct {
-	mu      sync.Mutex
-	tasks   map[string]*Task
-	cancels map[string]context.CancelFunc
-	jobs    map[string]jobFunc
-	seq     uint64
-	ttl     time.Duration
-	path    string // optional JSON persistence file
+	mu         sync.Mutex
+	tasks      map[string]*Task
+	cancels    map[string]context.CancelFunc
+	jobs       map[string]jobFunc
+	seq        uint64
+	ttl        time.Duration
+	path       string // optional JSON persistence file
 	onComplete func(Task)
 }
 
