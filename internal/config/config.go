@@ -69,6 +69,17 @@ type Remote struct {
 	MetricsRequiresAuth bool `toml:"metrics_requires_auth"`
 }
 
+// Panel links wings back to the web panel (SFTP credential verification).
+// When set, SFTP logins unknown to the local store are verified against the
+// panel's /api/remote/sftp/auth endpoint, so users keep logging in with
+// their panel username/password (username format: user.uuidShort).
+// The Bearer is "tokenID.token", the same pair the panel shows for the node.
+type Panel struct {
+	URL     string `toml:"url"`
+	TokenID string `toml:"token_id"`
+	Token   string `toml:"token"`
+}
+
 // Webhook is a URL that receives POST notifications for events (task
 // completion, container events). Secret (if set) is sent as X-Webhook-Secret.
 type Webhook struct {
@@ -83,6 +94,7 @@ type Config struct {
 	Keys      []APIKey  `toml:"keys"`
 	Nodes     []Node    `toml:"nodes"`
 	Remote    Remote    `toml:"remote"`
+	Panel     Panel     `toml:"panel"`
 	RateLimit RateLimit `toml:"rate_limit"`
 	Webhooks  []Webhook `toml:"webhooks"`
 }
@@ -201,6 +213,15 @@ func Load(path string) (*Config, error) {
 		case "remote":
 			if key == "metrics_requires_auth" {
 				cfg.Remote.MetricsRequiresAuth = parseBool(value)
+			}
+		case "panel":
+			switch key {
+			case "url":
+				cfg.Panel.URL = unquote(value)
+			case "token_id":
+				cfg.Panel.TokenID = unquote(value)
+			case "token":
+				cfg.Panel.Token = unquote(value)
 			}
 		case "webhooks":
 			cfg.consumeWebhook(key, value)
@@ -435,6 +456,15 @@ name = "node-1"
 address = "http://10.0.0.2:2375"
 token = "that-node-serve-token"
 enabled = false
+
+# Link back to the web panel (SFTP logins with panel passwords).
+# url is the panel base URL; token_id/token is the "tokenID.token" pair
+# the panel shows for this node (Admin -> Nodes). When set, SFTP users
+# unknown to the local store are verified via /api/remote/sftp/auth.
+# [panel]
+# url = "https://panel.example.com"
+# token_id = "abc123"
+# token = "secrettoken"
 
 # Webhook notifications. events: task.completed, container.event, * (all).
 # [[webhooks]]

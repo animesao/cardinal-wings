@@ -388,14 +388,107 @@ paths:
   /v1/containers/{id}/backup:
     get:
       tags: [containers]
-      summary: Download container data as tar.gz
+      summary: Download container data as tar.gz (live stream)
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { "200": { description: tar.gz archive } }
     post:
       tags: [containers]
-      summary: Restore container data from tar.gz, ?clean=1 for exact restore (admin)
+      summary: Snapshot ({"uuid"} → 202 async), stored restore ({"backup_uuid"}/{ "download_url"}), or binary tar.gz upload; ?clean=1 for exact restore (admin)
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
-      responses: { "200": { description: restored } }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                uuid: { type: string }
+                backup_uuid: { type: string }
+                download_url: { type: string }
+                format: { type: string }
+      responses: { "200": { description: restored }, "202": { description: snapshot accepted } }
+    delete:
+      tags: [containers]
+      summary: Delete a stored snapshot (?uuid=, admin; 404 when already gone)
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: uuid, in: query, schema: { type: string } }
+      responses: { "200": { description: deleted } }
+  /v1/containers/{id}/reinstall:
+    post:
+      tags: [containers]
+      summary: Recreate container from a full CreateRequest, keeping the data volume (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateRequest" }
+      responses: { "201": { description: reinstalled } }
+  /v1/containers/{id}/pull:
+    get:
+      tags: [containers]
+      summary: List active file pulls (always empty in v1, no queue)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "200": { description: pulls } }
+    post:
+      tags: [containers]
+      summary: Download a remote URL into the container data dir (admin)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url]
+              properties:
+                url: { type: string }
+                root: { type: string }
+                file_name: { type: string }
+      responses: { "200": { description: pulled } }
+  /v1/containers/{id}/transfer:
+    post:
+      tags: [containers]
+      summary: Register a server transfer (admin, 202 queued; data moves via backup export/import)
+      parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
+      responses: { "202": { description: queued } }
+  /v1/transfers:
+    post:
+      tags: [containers]
+      summary: Accept an inbound transfer registration (admin)
+      responses: { "202": { description: accepted } }
+  /v1/config:
+    post:
+      tags: [system]
+      summary: Push node configuration from the panel; persists the panel link (admin)
+      responses: { "200": { description: received } }
+  /v1/deauthorize:
+    post:
+      tags: [system]
+      summary: Deauthorize a user (admin; no-op, short-lived credentials need no revocation)
+      responses: { "200": { description: ok } }
+  /download/file:
+    get:
+      tags: [system]
+      summary: Browser file download via panel-signed JWT (?token=, scope file-download)
+      parameters: [{ name: token, in: query, required: true, schema: { type: string } }]
+      responses: { "200": { description: file bytes } }
+  /upload/file:
+    post:
+      tags: [system]
+      summary: Browser file upload via panel-signed JWT (?token=, scope file-upload), multipart files
+      parameters: [{ name: token, in: query, required: true, schema: { type: string } }]
+      responses: { "200": { description: uploaded } }
+  /download/backup:
+    get:
+      tags: [system]
+      summary: Stored snapshot download via panel-signed JWT (?token=, scope backup-download)
+      parameters: [{ name: token, in: query, required: true, schema: { type: string } }]
+      responses: { "200": { description: tar.gz snapshot } }
+  /api/servers/{uuid}/ws:
+    get:
+      tags: [system]
+      summary: Legacy console websocket protocol (panel JWT auth frame, then status/console output/stats)
+      parameters: [{ name: uuid, in: path, required: true, schema: { type: string } }]
+      responses: { "101": { description: switching protocols } }
   /v1/containers/{id}/cp:
     post:
       tags: [containers]

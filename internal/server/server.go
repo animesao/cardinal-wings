@@ -31,11 +31,16 @@ var version = "dev"
 // daemon must be started through Run (which assigns it).
 var defaultClient *runtime.Client
 
+// wingCfg is the active daemon config, published by Run for handlers that
+// need it after startup (backup completion callbacks, panel link).
+var wingCfg *config.Config
+
 // Run starts wings: it launches the local `cardinal serve` subprocess (if the
 // binary is present), then serves the panel-facing API on the configured
 // address. When cardinal is missing, wings still starts and reports the local
 // node as down — the panel can show degraded status instead of a dead daemon.
 func Run(cfg *config.Config) error {
+	wingCfg = cfg
 	var local *agent.Local
 	if l, err := agent.StartLocal(); err == nil {
 		local = l
@@ -81,6 +86,9 @@ func Run(cfg *config.Config) error {
 	public := http.NewServeMux()
 	public.HandleFunc("/v1/ping", handlePing)
 	public.HandleFunc("/healthz", handleHealthz)
+	// Legacy panel browser flows (own JWT auth, no Bearer): file
+	// download/upload signed URLs and the old console websocket protocol.
+	panelBrowserRoutes(public, cfg)
 
 	// Authenticated v1 API surface.
 	api := http.NewServeMux()
@@ -99,6 +107,7 @@ func Run(cfg *config.Config) error {
 	servicesRoutes(api, mw)
 	bootstrapRoutes(api, mw)
 	systemRoutes(api, mw)
+	panelRoutes(api, mw)
 	clusterRoutes(api)
 
 	// The authenticated chain: CORS -> per-key rate limit -> per-IP rate

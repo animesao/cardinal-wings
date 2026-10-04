@@ -29,5 +29,17 @@ address = "http://10.0.0.2:2375"
 token = "that-node-serve-token"
 enabled = false
 
+# Link back to the web panel (SFTP logins with panel passwords, backup
+# completion callbacks). url is the panel base URL; token_id/token is the
+# "tokenID.token" pair the panel shows for this node (Admin -> Nodes).
+# When set, SFTP users unknown to the local store are verified via
+# POST {url}/api/remote/sftp/auth, and backup snapshots are reported to
+# POST {url}/api/remote/backups/{uuid}. The panel also pushes these values
+# automatically on every node save (POST /v1/config).
+# [panel]
+# url = "https://panel.example.com"
+# token_id = "abc123"
+# token = "secrettoken"
+
 [remote]
 metrics_requires_auth = true

@@ -165,10 +165,69 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 ## Backup (whole data dir as tar.gz)
 
 ```bash
-# Download (GET) / restore (POST, ?clean=1 wipes the data root first, admin)
+# Daemon-local snapshots (panel "agent" driver):
+# create (202, async; completion is POSTed to the panel when linked)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"uuid":"<backup-uuid>"}' localhost:8080/v1/containers/<id>/backup
+# restore a stored snapshot (?clean=1 wipes the data root first, admin)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"backup_uuid":"<backup-uuid>"}' "localhost:8080/v1/containers/<id>/backup?clean=1"
+# restore a remote archive (e.g. S3 presigned URL) without panel streaming
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"download_url":"https://…/backup.tar.gz"}' "localhost:8080/v1/containers/<id>/backup?clean=1"
+# delete a stored snapshot (admin; 404 when already gone)
+curl -X DELETE -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/backup?uuid=<backup-uuid>"
+
+# Ad-hoc live stream (GET) / direct binary restore (POST, admin)
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/backup -o backup.tar.gz
 curl -X POST -H "Authorization: Bearer KEY" --data-binary @backup.tar.gz \
   "localhost:8080/v1/containers/<id>/backup?clean=1"
+```
+
+## Panel parity (reinstall / pull / transfer / config)
+
+```bash
+# Reinstall: recreate the container from a full CreateRequest, keeping the
+# named data volume (admin)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"name":"<id>","image":"nginx:alpine",…}' localhost:8080/v1/containers/<id>/reinstall
+
+# Pull a remote file into the container data dir (admin)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"url":"https://…/mods.zip","root":"/","file_name":"mods.zip"}' \
+  localhost:8080/v1/containers/<id>/pull
+curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/pull  # [] (no queue in v1)
+
+# Server transfer notification (admin, 202 queued; data moves via backup export/import)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"server_id":"<uuid>","url":"https://node2:8080/v1/transfers","token":"Bearer …"}' \
+  localhost:8080/v1/containers/<id>/transfer
+
+# Push node configuration from the panel (admin; persists the panel link for
+# SFTP verification and backup callbacks, never fails the panel sync flow)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"panel_url":"https://panel.example.com","daemon_token_id":"…","daemon_token":"…"}' \
+  localhost:8080/v1/config
+
+# Deauthorize a user (admin; no-op — wings uses short-lived JWT/Bearer, no JTI store)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"user":"username","servers":[]}' localhost:8080/v1/deauthorize
+```
+
+## Panel browser flows (panel-signed JWT, no Bearer)
+
+The panel signs short-lived JWTs (HMAC-SHA256 with the node daemon token,
+which is a wings API key) for direct browser↔daemon traffic. Wings verifies
+them against its configured keys — the React client works unchanged:
+
+```text
+GET  /download/file?token=…        scope file-download (claims server_uuid + file_path)
+POST /upload/file?token=…          scope file-upload (claims server_uuid), multipart files + ?directory=
+GET  /download/backup?token=…      scope backup-download (claims server_uuid + backup_uuid)
+GET  /api/servers/{uuid}/ws        legacy console protocol: {"event":"auth","args":[token]}
+                                   (scope websocket, claims server_uuid + permissions),
+                                   then status / console output / stats events,
+                                   send command / set state / send logs.
 ```
 
 ## Events & bootstrap
@@ -220,6 +279,11 @@ sftp://<node-host>:2022   user: <username>   pass: <generated-password>
 The SSH host key is persisted at `$WINGS_DATA_DIR/sftp_host_key` (generated
 on first start); credentials live in `$WINGS_DATA_DIR/sftp-users.json`
 (bcrypt-hashed).
+
+Panel-password logins (`user.uuidShort` + panel password/SSH key) are
+verified against the panel's `/api/remote/sftp/auth` when a panel link is
+configured (`[panel]` section or panel-pushed `/v1/config`), exactly like
+classic wings — no per-user credential sync needed.
 
 ## Images
 

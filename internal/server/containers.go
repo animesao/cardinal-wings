@@ -157,15 +157,15 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/resize", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/resize", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait", "reinstall", "pull", "transfer":
 		return true
 	case "sftp", "ports":
 		return method != http.MethodGet
 	}
-	// Backup restore (POST) uploads an archive into the container — mutating.
-	// Backup download (GET) is a read, same as fm/download.
+	// Backup snapshot/restore/delete are mutating; live download (GET) is a
+	// read, same as fm/download.
 	if action == "backup" {
-		return method == http.MethodPost
+		return method != http.MethodGet
 	}
 	// File manager: reads (list/read/download) are non-mutating; the write ops
 	// and every other fm action require admin.
@@ -351,8 +351,17 @@ func handleContainerRef(w http.ResponseWriter, r *http.Request) {
 	case action == "logs" && r.Method == http.MethodGet:
 		handleContainerLogs(w, r, ref, c)
 
-	case action == "backup" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
-		handleContainerBackup(w, r, ref)
+	case action == "backup" && (r.Method == http.MethodGet || r.Method == http.MethodPost || r.Method == http.MethodDelete):
+		handleBackupRoute(w, r, ref)
+
+	case action == "reinstall" && r.Method == http.MethodPost:
+		handleContainerReinstall(w, r, ref, c)
+
+	case action == "pull" && (r.Method == http.MethodGet || r.Method == http.MethodPost):
+		handleContainerPull(w, r, ref)
+
+	case action == "transfer" && r.Method == http.MethodPost:
+		handleContainerTransfer(w, r, ref)
 
 	case action == "limits" && r.Method == http.MethodPost:
 		handleContainerLimits(w, r, ref, c)

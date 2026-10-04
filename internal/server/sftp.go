@@ -417,16 +417,34 @@ func startSFTPServer(cfg *config.Config) error {
 
 	sshCfg := &ssh.ServerConfig{
 		PasswordCallback: func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
-			entry, ok := store.entryByUsername(conn.User())
-			if !ok {
-				return nil, errors.New("unknown sftp user")
+			// 1. Panel-assigned per-container credentials (PUT /v1/.../sftp).
+			if entry, ok := store.entryByUsername(conn.User()); ok {
+				if bcrypt.CompareHashAndPassword([]byte(entry.PasswordHash), pass) != nil {
+					return nil, errors.New("invalid password")
+				}
+				return &ssh.Permissions{Extensions: map[string]string{"container-id": entry.ContainerID}}, nil
 			}
-			if bcrypt.CompareHashAndPassword([]byte(entry.PasswordHash), pass) != nil {
-				return nil, errors.New("invalid password")
+			// 2. Panel username/password (user.uuidShort + panel password)
+			// verified against /api/remote/sftp/auth, like classic wings.
+			if link, ok := effectivePanelLink(cfg); ok {
+				if serverUUID, err := panelSFTPAuth(link, conn.User(), string(pass), "password"); err == nil {
+					return &ssh.Permissions{Extensions: map[string]string{"container-id": serverUUID}}, nil
+				}
 			}
-			return &ssh.Permissions{Extensions: map[string]string{"container-id": entry.ContainerID}}, nil
+			return nil, errors.New("unknown sftp user")
 		},
-		MaxAuthTries: 3,
+		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+			if link, ok := effectivePanelLink(cfg); ok {
+				// Panel matches the key by fingerprint; send the
+				// authorized-key line as the "password" with type=public_key.
+				line := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+				if serverUUID, err := panelSFTPAuth(link, conn.User(), line, "public_key"); err == nil {
+					return &ssh.Permissions{Extensions: map[string]string{"container-id": serverUUID}}, nil
+				}
+			}
+			return nil, errors.New("unknown sftp key")
+		},
+		MaxAuthTries: 6,
 	}
 	sshCfg.AddHostKey(signer)
 

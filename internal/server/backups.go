@@ -161,30 +161,8 @@ func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 
 	// Host path restore — robust for images whose entrypoint is not a shell.
 	if hostRoot, herr := hostDataRoot(ref); herr == nil && hostRoot != "/" {
-		if clean {
-			entries, err := os.ReadDir(hostRoot)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "clean data root: "+err.Error())
-				return
-			}
-			var firstErr error
-			for _, e := range entries {
-				if perr := os.RemoveAll(filepath.Join(hostRoot, e.Name())); perr != nil && firstErr == nil {
-					firstErr = perr
-				}
-			}
-			if firstErr != nil {
-				writeError(w, http.StatusInternalServerError, "clean data root: "+firstErr.Error())
-				return
-			}
-		}
-
-		cmd := exec.Command("tar", "xzf", "-", "-C", hostRoot, "--no-absolute-names", "--no-same-owner")
-		cmd.Stdin = io.LimitReader(r.Body, 20<<30)
-		var stderr bytes.Buffer
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			writeError(w, http.StatusInternalServerError, fmt.Sprintf("restore: host tar failed: %v %s", err, strings.TrimSpace(stderr.String())))
+		if err := extractReaderToHost(hostRoot, io.LimitReader(r.Body, 20<<30), clean); err != nil {
+			writeError(w, http.StatusInternalServerError, "restore: "+err.Error())
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"restored": ref, "clean": fmt.Sprintf("%t", clean)})
@@ -234,6 +212,35 @@ func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"restored": ref, "clean": fmt.Sprintf("%t", clean)})
+}
+
+// extractReaderToHost extracts a tar.gz stream into hostRoot with host tar.
+// With clean=true the root is emptied first (exact restore). Shared by the
+// upload-restore path and stored/remote restores (backups_store.go).
+func extractReaderToHost(hostRoot string, src io.Reader, clean bool) error {
+	if hostRoot == "/" || filepath.Clean(hostRoot) == "/" {
+		return fmt.Errorf("invalid restore root")
+	}
+	if clean {
+		entries, err := os.ReadDir(hostRoot)
+		if err != nil {
+			return fmt.Errorf("clean data root: %w", err)
+		}
+		for _, e := range entries {
+			if perr := os.RemoveAll(filepath.Join(hostRoot, e.Name())); perr != nil {
+				return fmt.Errorf("clean data root: %w", perr)
+			}
+		}
+	}
+
+	cmd := exec.Command("tar", "xzf", "-", "-C", hostRoot, "--no-absolute-names", "--no-same-owner")
+	cmd.Stdin = src
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("host tar failed: %v %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
 }
 
 // copyAndClose copies src into w and closes src, tolerating client aborts.
