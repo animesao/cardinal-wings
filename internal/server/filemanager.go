@@ -92,7 +92,11 @@ func unescapeMountField(value string) string {
 // beginFMSession makes sure disk-backed data and the overlay are available.
 // Cardinal normally leaves these mounts in place after stop. If the host was
 // rebooted while the container was stopped, Wings recreates them on demand.
+//
+// id may be a name or an ID: names resolve to the on-disk ID first (see
+// resolve.go) so panel-stable names work without storing cardinal IDs.
 func beginFMSession(id string) (*fmSession, error) {
+	id = resolveLocalID(id)
 	if !validContainerID(id) {
 		return nil, fmt.Errorf("invalid container id")
 	}

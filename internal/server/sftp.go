@@ -213,7 +213,11 @@ func cardinalDataDir() string {
 // merged/data for itzg-style images, merged/home/container for Pterodactyl
 // images, falling back to the merged root itself. It also reports whether the
 // overlay is currently mounted (i.e. the directory exists and has content).
+//
+// containerID may be a name or an ID: names are resolved to the on-disk ID
+// first (see resolve.go) so panel-stable names work here too.
 func containerDataRoot(containerID string) (string, bool, error) {
+	containerID = resolveLocalID(containerID)
 	merged := filepath.Join(cardinalDataDir(), "overlay", containerID, "merged")
 	if _, err := os.Stat(merged); err != nil {
 		return "", false, fmt.Errorf("container data not available: %w", err)

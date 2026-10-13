@@ -16,6 +16,20 @@ node (default: the local node):
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers?node=node-2"
 ```
 
+## Container refs: names or IDs
+
+Every `/v1/containers/{id}` endpoint accepts a cardinal container **name** or
+**ID**. Proxied calls (inspect, start/stop, stats, logs, exec, …) go through
+`cardinal serve`, which resolves names itself; filesystem calls (fm, backup,
+pull, sftp, terminal) resolve the name to the on-disk ID inside wings and
+fall back to the raw ref when the node is unreachable.
+
+Panels should therefore address containers by a **stable name**
+(e.g. `srv-<server-uuid>`) and never store cardinal's random IDs: names
+survive `reinstall` (which recreates the container with a new ID), and
+daemon-local snapshot paths plus SFTP credentials stay valid across
+reinstalls automatically.
+
 ## System
 
 ```bash
