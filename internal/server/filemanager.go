@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 )
@@ -379,11 +380,18 @@ func (s *fmSession) resolve(requestPath string, allowMissing bool) (string, erro
 }
 
 func pathArg(r *http.Request, body map[string]interface{}, name string) (string, bool) {
-	// Query paths from the panel are base64 encoded. JSON body paths are already
-	// plain strings; decoding them as base64 corrupts valid names such as
-	// "test" or "logs".
+	// Query paths from the panel are raw strings; legacy callers may send
+	// base64. JSON body paths are already plain strings; decoding them as
+	// base64 corrupts valid names such as "test" or "logs".
+	//
+	// The base64 branch requires a clean round-trip AND valid UTF-8: raw
+	// paths like "/plugins" are accidentally valid base64 (they round-trip)
+	// but decode to binary garbage, which previously produced
+	// "path not found: <mojibake>". Genuine base64 payloads decode to
+	// printable paths and still work.
 	if raw := r.URL.Query().Get(name); raw != "" {
-		if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil && base64.StdEncoding.EncodeToString(decoded) == raw {
+		if decoded, err := base64.StdEncoding.DecodeString(raw); err == nil &&
+			base64.StdEncoding.EncodeToString(decoded) == raw && utf8.Valid(decoded) {
 			return string(decoded), true
 		}
 		return raw, true
