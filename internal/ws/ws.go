@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +28,11 @@ type Conn struct {
 	w         *bufio.Writer
 	writeMu   sync.Mutex
 	closeOnce sync.Once
+	// closing tracks whether a close frame was already sent or received.
+	// At most one close frame ever goes out: without this, a peer-initiated
+	// close gets echoed AND re-sent by Close() (or vice versa), and browsers
+	// report the second frame as "Close received after close".
+	closing atomic.Bool
 }
 
 // Upgrade performs the websocket handshake on an HTTP request and hijacks the
@@ -92,8 +98,12 @@ func (c *Conn) ReadText() ([]byte, error) {
 		}
 		switch opcode {
 		case 0x8: // close
-			// A close reply is required by RFC 6455. Echo the close payload,
-			// then let the caller tear down the socket.
+			// A close reply is required by RFC 6455 — exactly once. If we
+			// already sent (or are sending) our own close, swallowing the
+			// peer's echo instead of re-echoing it.
+			if c.closing.Swap(true) {
+				return nil, io.EOF
+			}
 			if err := c.writeControl(0x8, payload); err != nil {
 				return nil, err
 			}
@@ -153,14 +163,18 @@ func (c *Conn) writeControl(opcode byte, payload []byte) error {
 	return c.w.Flush()
 }
 
-// Close sends a close frame and closes the socket exactly once.
+// Close sends a close frame and closes the socket exactly once. If the peer
+// already closed (a close frame was received and echoed), no second frame
+// goes out — just the TCP teardown.
 func (c *Conn) Close() error {
 	var err error
 	c.closeOnce.Do(func() {
-		c.writeMu.Lock()
-		_ = writeFrame(c.w, 0x8, nil)
-		_ = c.w.Flush()
-		c.writeMu.Unlock()
+		if !c.closing.Swap(true) {
+			c.writeMu.Lock()
+			_ = writeFrame(c.w, 0x8, nil)
+			_ = c.w.Flush()
+			c.writeMu.Unlock()
+		}
 		err = c.conn.Close()
 	})
 	return err
