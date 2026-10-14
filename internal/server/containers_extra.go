@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/runtime"
@@ -142,6 +143,7 @@ func handleContainerPortsMut(w http.ResponseWriter, r *http.Request, ref, action
 		writeError(w, http.StatusBadRequest, "mapping required (host:container[/proto])")
 		return
 	}
+	mapping = normalizePortMapping(mapping, action)
 	var err error
 	if action == "ports/add" {
 		err = agent.PortAdd(r.Context(), ref, mapping)
@@ -153,4 +155,27 @@ func handleContainerPortsMut(w http.ResponseWriter, r *http.Request, ref, action
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"id": ref, "action": action, "mapping": mapping, "ok": "true"})
+}
+
+// normalizePortMapping trims a full "host:container[/proto]" mapping down to
+// the "host[/proto]" form `cardinal port rm` parses, so callers can pass the
+// same string to ports/add and ports/remove. A bare "host[/proto]" passes
+// through untouched.
+func normalizePortMapping(mapping, action string) string {
+	if action != "ports/remove" {
+		return mapping
+	}
+	host := mapping
+	proto := ""
+	if i := strings.LastIndex(host, "/"); i >= 0 {
+		proto = host[i+1:]
+		host = host[:i]
+	}
+	if i := strings.Index(host, ":"); i >= 0 {
+		host = host[:i]
+	}
+	if proto != "" {
+		return host + "/" + proto
+	}
+	return host
 }
