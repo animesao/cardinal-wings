@@ -79,6 +79,9 @@ func Run(cfg *config.Config) error {
 		logf("!! sftp server disabled: %v", err)
 	}
 
+	// Autostart: raise panel-flagged containers after host boot.
+	bootAutostart(cfg, defaultClient)
+
 	mw := auth.New(cfg)
 
 	// Public (no auth): liveness and health checks for load balancers and
