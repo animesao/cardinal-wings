@@ -341,9 +341,14 @@ open_firewall() {
   fi
   echo "==> opening firewall ports: ${open_ports[*]}"
   if have ufw; then
-    if command -v ufw >/dev/null 2>&1; then
-      ufw allow "${open_ports[@]}" 2>/dev/null && return 0
-    fi
+    # ufw принимает только один порт за вызов (или список через запятую):
+    # `ufw allow 8080/tcp 2022/tcp` — ошибка синтаксиса. Открываем по одному,
+    # иначе правило молча не встанет и SFTP останется закрыт.
+    local port ok=1
+    for port in "${open_ports[@]}"; do
+      ufw allow "${port}" 2>/dev/null || ok=0
+    done
+    [ "${ok}" = "1" ] && return 0
   fi
   if have firewall-cmd; then
     local port
@@ -356,12 +361,31 @@ open_firewall() {
   if have iptables; then
     local port
     for port in "${open_ports[@]}"; do
-      iptables -I INPUT -p "${port#*/}" --dport "${port%/*}" -j ACCEPT 2>/dev/null || true
+      iptables -C INPUT -p "${port#*/}" --dport "${port%/*}" -j ACCEPT 2>/dev/null \
+        || iptables -I INPUT -p "${port#*/}" --dport "${port%/*}" -j ACCEPT 2>/dev/null || true
     done
+    persist_iptables
     return 0
   fi
   echo "    warning: no ufw/firewalld/iptables found — open ports manually:"
   echo "    ${open_ports[*]}"
+}
+
+# persist_iptables сохраняет правила, иначе они слетят при первой перезагрузке
+# ноды (классика: «после ребута SFTP отвалился, а API живой»).
+persist_iptables() {
+  if have netfilter-persistent; then
+    netfilter-persistent save 2>/dev/null && echo "    iptables rules persisted" && return 0
+  fi
+  if [ -d /etc/iptables ]; then
+    if iptables-save > /etc/iptables/rules.v4 2>/dev/null; then
+      echo "    iptables rules saved to /etc/iptables/rules.v4"
+      return 0
+    fi
+  fi
+  echo "    warning: iptables rules are NOT persistent — they will be lost on reboot." >&2
+  echo "    Install persistence (Debian/Ubuntu): apt-get install -y iptables-persistent" >&2
+  return 0
 }
 open_firewall || true
 
