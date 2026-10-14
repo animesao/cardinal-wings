@@ -504,10 +504,91 @@ func handleSSHConn(conn net.Conn, sshCfg *ssh.ServerConfig, store *sftpStore) {
 	}
 }
 
+// ─── Data root lease ──────────────────────────────────────
+
+// sftpLeases refcount the overlay mount shared by concurrent SFTP sessions
+// for one container. The mount itself goes through fmMountMu (shared with the
+// HTTP file-manager) only for the duration of the mount, never for a session's
+// lifetime, so a long-lived SFTP connection cannot block file operations. The
+// overlay is unmounted exactly once — when the last session ends.
+//
+// This is what lets a stopped server's files stay reachable without starting
+// the container: the same on-demand mount the file manager uses.
+type sftpLeases struct {
+	mu     sync.Mutex
+	active map[string]*sftpLeaseEntry
+}
+
+type sftpLeaseEntry struct {
+	session *fmSession
+	root    string
+	refs    int
+}
+
+var sftpLeaseInst = &sftpLeases{active: map[string]*sftpLeaseEntry{}}
+
+// acquire returns the container's data root plus a release func that must be
+// called exactly once. Concurrent sessions share one mounted overlay.
+func (l *sftpLeases) acquire(containerID string) (string, func(), error) {
+	l.mu.Lock()
+	if e, ok := l.active[containerID]; ok {
+		e.refs++
+		root := e.root
+		l.mu.Unlock()
+		return root, func() { l.release(containerID) }, nil
+	}
+	l.mu.Unlock()
+
+	// Mount under fmMountMu so we never race a file-manager request, and hold
+	// it through registration so a concurrent SFTP session cannot claim the
+	// owner slot while we are mounting (lock order is always fmMountMu → l.mu).
+	fmMountMu.Lock()
+	defer fmMountMu.Unlock()
+
+	l.mu.Lock()
+	if e, ok := l.active[containerID]; ok {
+		e.refs++
+		root := e.root
+		l.mu.Unlock()
+		return root, func() { l.release(containerID) }, nil
+	}
+
+	session, err := mountOverlaySession(containerID)
+	if err != nil {
+		l.mu.Unlock()
+		return "", nil, err
+	}
+	l.active[containerID] = &sftpLeaseEntry{session: session, root: session.root, refs: 1}
+	root := session.root
+	l.mu.Unlock()
+	return root, func() { l.release(containerID) }, nil
+}
+
+func (l *sftpLeases) release(containerID string) {
+	fmMountMu.Lock()
+	defer fmMountMu.Unlock()
+
+	l.mu.Lock()
+	e, ok := l.active[containerID]
+	if !ok {
+		l.mu.Unlock()
+		return
+	}
+	e.refs--
+	if e.refs > 0 {
+		l.mu.Unlock()
+		return
+	}
+	delete(l.active, containerID)
+	session := e.session
+	l.mu.Unlock()
+
+	session.Close()
+}
+
 // handleSSHSession services one SSH session channel: it waits for the sftp
-// subsystem request, prepares the jailed filesystem (temporarily starting a
-// stopped container whose overlay is not mounted), then serves SFTP until the
-// channel closes.
+// subsystem request, prepares the jailed filesystem, then serves SFTP until
+// the channel closes.
 func handleSSHSession(ch ssh.Channel, reqs <-chan *ssh.Request, containerID string) {
 	defer ch.Close()
 
@@ -522,26 +603,24 @@ func handleSSHSession(ch ssh.Channel, reqs <-chan *ssh.Request, containerID stri
 			_ = req.Reply(true, nil)
 		}
 
-		root, mounted, err := containerDataRoot(containerID)
-		startedTemporarily := false
-		if err != nil || !mounted {
-			// Overlay not mounted (e.g. after host reboot): start the
-			// container for the duration of the session, then stop it again.
-			startedTemporarily = tryStartContainer(containerID)
-			root, mounted, err = containerDataRoot(containerID)
-			// The overlay mounts asynchronously after the init starts; poll
-			// briefly for the data dir to appear before giving up.
-			for i := 0; (err != nil || !mounted) && i < 20; i++ {
-				time.Sleep(500 * time.Millisecond)
-				root, mounted, err = containerDataRoot(containerID)
-			}
-			if err != nil || !mounted {
+		// Preferred path: mount the stopped container's data in place (the
+		// file manager's mechanism) and share the mount with any other SFTP
+		// session. The container stays off.
+		root, release, err := sftpLeaseInst.acquire(containerID)
+		if err != nil {
+			// Fallback: data not mountable (e.g. the image rootfs is missing
+			// after a fresh node install) — start the container for the
+			// session, as before, so SFTP still works.
+			logf("sftp: mount %s failed, trying temporary start: %v", containerID, err)
+			root, err = sftpRootViaStart(containerID)
+			if err != nil {
 				_, _ = io.WriteString(ch, "sftp: container data unavailable\r\n")
-				if startedTemporarily {
-					tryStopContainer(containerID)
-				}
 				return
 			}
+			release = nil
+			defer func() {
+				tryStopContainer(containerID)
+			}()
 		}
 
 		fs := jailFS{root: root}
@@ -551,15 +630,34 @@ func handleSSHSession(ch ssh.Channel, reqs <-chan *ssh.Request, containerID stri
 			FileCmd:  fs,
 			FileList: fs,
 		})
-		if err := server.Serve(); err != nil && !errors.Is(err, io.EOF) {
-			logf("sftp session for %s ended: %v", containerID, err)
+		if serveErr := server.Serve(); serveErr != nil && !errors.Is(serveErr, io.EOF) {
+			logf("sftp session for %s ended: %v", containerID, serveErr)
 		}
-
-		if startedTemporarily {
-			tryStopContainer(containerID)
+		if release != nil {
+			release()
 		}
 		return
 	}
+}
+
+// sftpRootViaStart starts a stopped container so its overlay mounts, then
+// returns the data root for the session. The caller stops it again on the way
+// out; if the start itself fails we stop it here so a container started only
+// for SFTP is never left running.
+func sftpRootViaStart(containerID string) (string, error) {
+	tryStartContainer(containerID)
+	root, mounted, err := containerDataRoot(containerID)
+	// The overlay mounts asynchronously after the init starts; poll briefly
+	// for the data dir to appear before giving up.
+	for i := 0; (err != nil || !mounted) && i < 20; i++ {
+		time.Sleep(500 * time.Millisecond)
+		root, mounted, err = containerDataRoot(containerID)
+	}
+	if err != nil || !mounted {
+		tryStopContainer(containerID)
+		return "", fmt.Errorf("container data unavailable")
+	}
+	return root, nil
 }
 
 // tryStartContainer asks the local cardinal node to start a container. It

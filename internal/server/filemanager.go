@@ -90,13 +90,31 @@ func unescapeMountField(value string) string {
 	return strings.ReplaceAll(value, `\134`, `\`)
 }
 
-// beginFMSession makes sure disk-backed data and the overlay are available.
-// Cardinal normally leaves these mounts in place after stop. If the host was
-// rebooted while the container was stopped, Wings recreates them on demand.
+// beginFMSession makes sure disk-backed data and the overlay are available
+// and holds fmMountMu for the whole HTTP request, so concurrent file-manager
+// requests cannot unmount each other. Cardinal normally leaves these mounts in
+// place after stop; if the host rebooted while the container was stopped,
+// Wings recreates them on demand.
+func beginFMSession(id string) (*fmSession, error) {
+	fmMountMu.Lock()
+	session, err := mountOverlaySession(id)
+	if err != nil {
+		fmMountMu.Unlock()
+		return nil, err
+	}
+	session.unlock = fmMountMu.Unlock
+	return session, nil
+}
+
+// mountOverlaySession prepares a container's data root, mounting the
+// persistent data image and overlay on demand. It does no locking of its own:
+// callers serialize mounts with fmMountMu and release it themselves — session
+// cleanup never unlocks it. Keeping mount work separate lets long-lived SFTP
+// sessions share a mount without holding fmMountMu for their lifetime.
 //
 // id may be a name or an ID: names resolve to the on-disk ID first (see
 // resolve.go) so panel-stable names work without storing cardinal IDs.
-func beginFMSession(id string) (*fmSession, error) {
+func mountOverlaySession(id string) (*fmSession, error) {
 	id = resolveLocalID(id)
 	if !validContainerID(id) {
 		return nil, fmt.Errorf("invalid container id")
@@ -110,16 +128,12 @@ func beginFMSession(id string) (*fmSession, error) {
 	work := filepath.Join(base, "work")
 	statePath := filepath.Join(cardinalDataDir(), "containers", id+".json")
 
-	fmMountMu.Lock()
 	session := &fmSession{
 		merged: merged,
 		data:   data,
-		unlock: fmMountMu.Unlock,
 	}
 	closeWithError := func(err error) (*fmSession, error) {
 		session.cleanupMounts()
-		session.unlock()
-		session.unlock = nil
 		return nil, err
 	}
 
