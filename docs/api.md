@@ -28,7 +28,12 @@ Panels should therefore address containers by a **stable name**
 (e.g. `srv-<server-uuid>`) and never store cardinal's random IDs: names
 survive `reinstall` (which recreates the container with a new ID), and
 daemon-local snapshot paths plus SFTP credentials stay valid across
-reinstalls automatically.
+reinstalls automatically. Name→ID resolution goes through `Inspect` with a
+5 s timeout and falls back to the raw ref when the node is unreachable;
+filesystem calls (fm/backup/sftp) always resolve against the **local** data
+dir regardless of `?node=` (which only routes the serve-proxied calls).
+An empty `Volume.Source` on create/reinstall is auto-filled as
+`srv-<container-name>`, so data survives reinstalls.
 
 ## System
 
@@ -56,7 +61,9 @@ curl -H "Authorization: Bearer KEY" localhost:8080/v1/metrics
 ## Containers
 
 ```bash
-# List (filters: ?all=1, ?state=running|stopped, ?image=, ?search=, ?limit=, ?offset=)
+# List (filters: ?all=1, ?state=running|stopped, ?image=, ?search=, ?limit=, ?offset=,
+#        ?sort=name|status|created_at (default name), ?order=asc|desc;
+#        limit default 100, capped at 1000, offset default 0)
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers?state=running&limit=50"
 
 # Create (admin)
@@ -93,7 +100,8 @@ curl -N -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/jso
   -d '{"Cmd":["tail","-f","/var/log/app.log"]}' \
   localhost:8080/v1/containers/<id>/exec/stream
 
-# Rename / top / wait / changes / export (top/changes/export are reads)
+# Rename / top / wait / changes / export (top/changes/export are reads;
+# rename also takes {"name"}, commit takes {repo,tag,ref} or ?repo&?tag)
 curl -X POST -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/rename?name=web2"
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/top?ps_args=aux"
 curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/wait
@@ -104,7 +112,8 @@ curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/export -o 
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"repo":"myapp","tag":"v1"}' localhost:8080/v1/containers/<id>/commit
 
-# Dynamic ports (admin for add/remove)
+# Dynamic ports (admin for add/remove; mapping "host:container[/proto]",
+# also accepted as {"port"} or ?mapping= / ?port=)
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/ports
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"mapping":"443:80/tcp"}' localhost:8080/v1/containers/<id>/ports/add
@@ -141,9 +150,16 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 # Read output as SSE, or raw duplex over websocket
 curl -N -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/terminal/stream
 # ws://localhost:8080/v1/containers/<id>/terminal/ws  (Authorization: Bearer KEY)
+# (at most one close frame per direction: a received close is echoed exactly
+# once, Close() after a received close only tears down TCP)
 ```
 
 ## Files (read-only fs + read/write file manager + cp)
+
+Query paths (`?path=`, `?src=`, `?dst=`) are passed through **raw**; they are
+base64-decoded only when the value round-trips cleanly **and** decodes to
+valid UTF-8 (so a plain `/plugins` stays literal instead of turning into
+binary garbage). JSON-body paths are always literal and never decoded.
 
 ```bash
 # Read-only browser (works on stopped containers too)
@@ -154,8 +170,11 @@ curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fs/tree?p
 # File manager: list/read/download are reads, the rest is admin
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/list?path=/"
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/read?path=/app/config.yml"
+curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/download?path=/app/server.jar" -o server.jar
+# → {"content":"<base64>","binary":true}
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"path":"/app/config.yml","content":"<base64>"}' localhost:8080/v1/containers/<id>/fm/write
+# fm/upload is an alias of fm/write (same base64 body)
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"path":"/data/worlds"}' localhost:8080/v1/containers/<id>/fm/mkdir
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
@@ -192,6 +211,12 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 # delete a stored snapshot (admin; 404 when already gone)
 curl -X DELETE -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/backup?uuid=<backup-uuid>"
 
+# Store details: snapshots live at $WINGS_DATA_DIR/backups/<container>/<uuid>.tar.gz,
+# restores accept {"backup_uuid"} or {"download_url"} and are capped at 20 GiB
+# (live streams run with a 4 h deadline). Async creates report back with
+# POST {panel}/api/remote/backups/{uuid}
+# {"successful":bool,"checksum":"<sha256>","checksum_type":"sha256","size":N}.
+
 # Ad-hoc live stream (GET) / direct binary restore (POST, admin)
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/backup -o backup.tar.gz
 curl -X POST -H "Authorization: Bearer KEY" --data-binary @backup.tar.gz \
@@ -217,16 +242,45 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
   -d '{"server_id":"<uuid>","url":"https://node2:8080/v1/transfers","token":"Bearer …"}' \
   localhost:8080/v1/containers/<id>/transfer
 
+# Inbound transfer registration on the migration target (admin, 202 ack;
+# the notify call only queues — bytes move through backup export/import)
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"server_id":"<uuid>","url":"https://node2:8080/v1/transfers","token":"Bearer …"}' \
+  localhost:8080/v1/transfers
+
 # Push node configuration from the panel (admin; persists the panel link for
 # SFTP verification and backup callbacks, never fails the panel sync flow)
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"panel_url":"https://panel.example.com","daemon_token_id":"…","daemon_token":"…"}' \
   localhost:8080/v1/config
+# → {"ok":true,"applied":false,"panel_link":true} (always 200)
+# Stored at $WINGS_DATA_DIR/panel-link.json (0600); a static [panel] config
+# section wins over the pushed file. Tolerant key spellings are accepted:
+# panel_url|panelURL|remote, daemon_token_id|token_id|tokenID,
+# daemon_token|token|secret. The same link feeds SFTP auth
+# (POST {panel}/api/remote/sftp/auth), backup callbacks
+# (POST {panel}/api/remote/backups/{uuid}) and autostart
+# (GET {panel}/api/remote/autostart).
 
 # Deauthorize a user (admin; no-op — wings uses short-lived JWT/Bearer, no JTI store)
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"user":"username","servers":[]}' localhost:8080/v1/deauthorize
 ```
+
+## Autostart (panel-flagged containers on boot)
+
+The panel owns the per-server auto-start flag; on daemon startup wings asks
+`GET {panel_url}/api/remote/autostart` (node-token Bearer, same scheme as the
+SFTP auth call) and starts every listed container that is not running:
+
+```text
+GET {panel}/api/remote/autostart
+→ {"servers":["srv-<uuid>", …]}   (only this node's servers)
+```
+
+The pass is background-only and never blocks startup: skipped with no local
+cardinal client or no panel link, retried 5×10 s while the panel comes up,
+then each stopped ref is inspected and started with a 1 s stagger.
 
 ## Panel browser flows (panel-signed JWT, no Bearer)
 
@@ -261,9 +315,12 @@ Wings runs an embedded SSH/SFTP server (default port `2022`, config:
 username/password per container; every SFTP session is jailed to that
 container's data directory on the host (`merged/data` or
 `merged/home/container`), so users can connect with any SFTP client
-(Filezilla, WinSCP, …) directly to the container. When the overlay is not
-mounted (e.g. after a host reboot), wings temporarily starts the container
-for the session and stops it again afterwards.
+(Filezilla, WinSCP, …) directly to the container — including stopped ones.
+On session start wings mounts the stopped container's overlay on demand (the
+file manager's mechanism) and shares the mount between concurrent sessions;
+the container stays off. Only when the data cannot be mounted (e.g. the image
+rootfs is missing) does wings fall back to temporarily starting the container
+for the session and stopping it again afterwards.
 
 ```bash
 # SFTP listener info
@@ -430,6 +487,10 @@ curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/functions/hello
 ```
 
 ## Cluster
+
+`?node=` also works on health/replicas/containers. `GET /v1/cluster/replicas`
+tries the daemon list first and falls back to `cardinal service ls`, so the
+panel always gets a list instead of a 405.
 
 ```bash
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/health

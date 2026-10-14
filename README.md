@@ -66,7 +66,14 @@ history/get/verify), `/v1/blueprints` (async install/uninstall),
 `/v1/tasks` (async jobs, persisted, cancel/retry), `/v1/networks` + `/v1/volumes`
 (local node only, via CLI), `/v1/services` (+inspect/update),
 `/v1/functions`, `/v1/nodes` + `/v1/cluster/*` (health/info/replicas
-create/remove/containers).
+create/remove/containers), `/v1/tasks/{id}/cancel|retry`, `/v1/transfers`
+(inbound migration registration), `/v1/config` (panel link push),
+`/v1/deauthorize`, `/v1/bootstrap/ensure`, JWT browser flows
+(`GET /download/file`, `POST /upload/file`, `GET /download/backup`,
+`GET /api/servers/{uuid}/ws`), per-container SFTP creds
+(`GET|PUT|DELETE /v1/containers/{id}/sftp`, `GET /v1/sftp/info`).
+Autostart is panel-driven: on boot wings asks
+`GET {panel}/api/remote/autostart` and starts the flagged containers.
 
 An **OpenAPI schema** lives in [docs/openapi.yaml](docs/openapi.yaml) — a
 panel client can be generated from it.
@@ -107,6 +114,9 @@ curl -s localhost:8080/v1/ping   # pong
 - Filesystem: `/v1/containers/{id}/fs/ls|cat|tree?path=` and
   `POST /v1/containers/{id}/cp {src, dst}`.
 - Multi-node metrics in `/v1/metrics` (per-node labels).
+- Autostart: on daemon start wings asks the panel
+  (`GET {panel_url}/api/remote/autostart`) and starts flagged containers
+  (background-only, never blocks startup).
 - Cluster deployment guide: [docs/cluster.md](docs/cluster.md).
 
 ## Releases & CI (GitHub Actions)
@@ -137,6 +147,33 @@ with `./install.sh local`.
 At the end the installer prints a **panel binding** block with the node
 `URL` (`http(s)://<ip>:<port>`) and the generated API `Token` — paste those two
 values into the panel's *Admin → Nodes → Add node* form.
+
+### Installer env vars + firewall
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `WINGS_OWNER` | `animesao` | GitHub owner for releases |
+| `WINGS_TLS` | `0` | generate a self-signed cert and enable TLS |
+| `WINGS_HOST` | `0.0.0.0` | API bind address (`127.0.0.1` for loopback-only) |
+| `WINGS_PORT` | `8080` | API port |
+| `WINGS_SFTP` | `1` | enable the per-container SFTP server |
+| `WINGS_SFTP_HOST` | `0.0.0.0` | SFTP bind address |
+| `WINGS_SFTP_PORT` | `2022` | SFTP port |
+| `WINGS_NO_FIREWALL` | `0` | `1` skips automatic firewall opening |
+| `WINGS_MIRROR` | _(empty)_ | self-hosted mirror base (GitHub Releases layout) |
+| `WINGS_SKIP_VERIFY` | `0` | `1` disables SHA256 verification |
+| `WINGS_SYSTEMD_URL` | _(empty)_ | custom systemd unit URL |
+| `WINGS_UPDATE_CARDINAL` | `0` | reserved: declared but not consumed by the script |
+| `WINGS_DATA_DIR` | _(cardinal data dir)_ | relocate wings state (audit log, SFTP store, panel link) |
+
+The installer opens firewall ports automatically (skip with
+`WINGS_NO_FIREWALL=1`): the API port only for non-loopback binds, the SFTP
+port only when SFTP is enabled on a non-loopback host. Backends in order:
+`ufw` (one port per call), `firewall-cmd --permanent` + reload, `iptables`
+(idempotent `-C` check, persisted via `netfilter-persistent save` or
+`/etc/iptables/rules.v4`, with a warning when persistence is unavailable —
+raw iptables rules are lost on reboot). Note the installer binds `0.0.0.0` by
+default while `config.example.toml` documents a loopback bind.
 
 > **Slow GitHub in your region?** Point the installer at a self-hosted mirror
 > with `WINGS_MIRROR=https://mirror.example.com/wings` (expects

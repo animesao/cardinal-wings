@@ -94,10 +94,15 @@ curl -X POST -H "Authorization: Bearer panel-admin-key" \
 
 - **Events:** `GET /v1/events` streams container events (SSE).
 - **Metrics:** `GET /v1/metrics` (admin) exposes per-node gauges for Prometheus.
+- `?node=` works on health/replicas/containers; `GET /v1/cluster/replicas`
+  falls back to `cardinal service ls` when the daemon has no list endpoint.
 
 ## Firewall notes
 
 - wings hub: open only the port your proxy/panel needs (8080 by default).
+- Per-container SFTP: open the SFTP port (2022 by default) — the installer
+  does this automatically unless `WINGS_NO_FIREWALL=1` (see the installer
+  env + firewall table in [README.md](../README.md#installer-env-vars--firewall)).
 - cardinal serve on nodes: **must be reachable from the hub** (2375). Keep it
   behind the cluster token; do not expose 2375 to the public internet.
 - Prefer TLS: run wings behind a reverse proxy (Caddy/nginx) with a real cert,

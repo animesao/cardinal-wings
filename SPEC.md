@@ -92,7 +92,7 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 ### Containers
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/v1/containers` | filters: `?state=running|stopped`, `?image=`, `?search=`, `?all=1` |
+| GET | `/v1/containers` | filters: `?state=running|stopped`, `?image=`, `?search=`, `?all=1`, `?limit=` (default 100, cap 1000), `?offset=`, `?sort=name|status|created_at`, `?order=asc|desc` |
 | POST | `/v1/containers` | create from image (admin) |
 | GET | `/v1/containers/{id}` | inspect |
 | POST | `/v1/containers/{id}/start` · `/stop` · `/restart` · `/kill` | admin |
@@ -166,6 +166,8 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 |---|---|---|
 | GET | `/v1/tasks` | list (auto-prunes finished older than 1h) |
 | GET | `/v1/tasks/{id}` | poll one job (`queued|running|succeeded|failed`) |
+| POST | `/v1/tasks/{id}/cancel` | cancel a queued/running task (admin) |
+| POST | `/v1/tasks/{id}/retry` | re-run a finished task, returns the new task (admin, 202) |
 
 ### Streaming / terminal / files (live, all present in code + openapi)
 | Method | Path | Notes |
@@ -175,8 +177,8 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 | POST | `/v1/containers/{id}/terminal` + `/terminal/input` + `/terminal/stream` (SSE) + `/terminal/ws` | interactive attach-console |
 | GET | `/v1/containers/{id}/stats?stream=1` | one-shot or SSE |
 | GET | `/v1/containers/{id}/fs/ls\|cat\|tree` · `POST .../cp` | host↔container copy |
-| ANY | `/v1/containers/{id}/fm/list\|read\|download\|write\|upload\|mkdir\|rm\|move\|chmod` | jailed file manager |
-| GET\|POST | `/v1/containers/{id}/backup` | download tar.gz / restore |
+| ANY | `/v1/containers/{id}/fm/list\|read\|download\|write\|upload\|mkdir\|rm\|move\|chmod\|download-zip\|upload-zip` | jailed file manager |
+| GET\|POST\|DELETE | `/v1/containers/{id}/backup` | stored snapshots (DELETE 404s when gone); JWT `GET /download/backup?token=` (scope `backup-download`) |
 | GET\|PUT\|DELETE | `/v1/containers/{id}/sftp` | per-container SFTP creds; `GET /v1/sftp/info` global |
 | GET | `/v1/events` | SSE container events |
 | GET | `/v1/metrics` | Prometheus (admin) |
@@ -216,6 +218,9 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
 7. **Phase 6 — panel + site.** `cardinal-panel` web UI (separate repo); promote
    the `/wings/` site page to real docs; update the news post. ✅ Site page and
    news updated for the skeleton; the panel remains a separate project.
+8. **Phase 7 — node boot behaviors.** Autostart of panel-flagged containers
+   (`GET {panel}/api/remote/autostart`, background-only pass on daemon start)
+   and SFTP offline-mount sharing (no temporary container start). ✅ Done.
 
 ## Non-goals (v1)
 

@@ -31,6 +31,10 @@ Or download the binary for your platform and run:
 - `GET /v1/images`, `/v1/images/{ref}` — list/inspect/remove/tag/push/pull/search
 - `GET /v1/blueprints`, `/v1/blueprints/{name}`, `POST .../install|uninstall`
 - `GET /v1/nodes`, `/v1/cluster/health|replicas|containers`
+- `POST /v1/transfers` (inbound migration registration), `POST /v1/config` (panel link), `POST /v1/deauthorize`
+- JWT browser flows: `GET /download/file`, `POST /upload/file`, `GET /download/backup`, `GET /api/servers/{uuid}/ws`
+- SFTP: `GET /v1/sftp/info`, `GET|PUT|DELETE /v1/containers/{id}/sftp` (offline-capable sessions)
+- `POST /v1/tasks/{id}/cancel|retry`, `POST /v1/bootstrap/ensure`
 
 Auth: multiple API keys with roles (`readonly`/`admin`), rate-limited, loopback by default.
 
