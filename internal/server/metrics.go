@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/config"
 	"github.com/animesao/cardinal-wings/internal/runtime"
 )
 
@@ -19,8 +20,9 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return
 	}
-	// Metrics are sensitive (they reveal node layout); admin only.
-	if role, ok := auth.RoleFrom(r.Context()); !ok || role != "admin" {
+	// Metrics are sensitive (they reveal node layout); admin only, unless
+	// the operator explicitly relaxes it with [remote] metrics_requires_auth.
+	if role, ok := auth.RoleFrom(r.Context()); !ok || (role != config.RoleAdmin && wingCfg.Remote.MetricsRequiresAuth) {
 		writeErr(w, http.StatusForbidden, ErrForbidden, "admin role required")
 		return
 	}
@@ -28,6 +30,8 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 
 	// Node liveness.
+	fmt.Fprintf(&b, "# HELP cardinal_wings_node_up Whether a node is reachable (1) or down (0).\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_node_up gauge\n")
 	snapshot := checker.snapshot()
 	names := registry.names()
 	for _, name := range names {
@@ -38,10 +42,13 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(&b, "cardinal_wings_node_up{node=%q} %d\n", name, up)
 	}
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_node_up gauge\n")
-	fmt.Fprintf(&b, "# HELP cardinal_wings_node_up Whether a node is reachable (1) or down (0).\n\n")
+	fmt.Fprintf(&b, "\n")
 
 	// Per-node container/image counts, collected concurrently.
+	fmt.Fprintf(&b, "# HELP cardinal_wings_containers Containers per node and state.\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_containers gauge\n")
+	fmt.Fprintf(&b, "# HELP cardinal_wings_containers_total Total containers per node.\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_containers_total gauge\n")
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	for _, name := range names {
@@ -78,10 +85,11 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 		}(name, c)
 	}
 	wg.Wait()
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_containers gauge\n")
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_containers_total gauge\n\n")
+	fmt.Fprintf(&b, "\n")
 
 	// Per-node image counts.
+	fmt.Fprintf(&b, "# HELP cardinal_wings_images_total Total images per node.\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_images_total gauge\n")
 	for _, name := range names {
 		c := registry.byName(name)
 		if c == nil {
@@ -91,7 +99,7 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&b, "cardinal_wings_images_total{node=%q} %d\n", name, len(imgs))
 		}
 	}
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_images_total gauge\n\n")
+	fmt.Fprintf(&b, "\n")
 
 	// Task stats (wings-local, not per node).
 	tasks := taskMgr.List()
@@ -108,12 +116,16 @@ func handleMetrics(w http.ResponseWriter, r *http.Request) {
 			succeeded++
 		}
 	}
+	fmt.Fprintf(&b, "# HELP cardinal_wings_tasks_failed_total Failed tasks.\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_tasks_failed_total counter\n")
+	fmt.Fprintf(&b, "# HELP cardinal_wings_tasks_running Running or queued tasks.\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_tasks_running gauge\n")
+	fmt.Fprintf(&b, "# HELP cardinal_wings_tasks_succeeded_total Succeeded tasks.\n")
+	fmt.Fprintf(&b, "# TYPE cardinal_wings_tasks_succeeded_total counter\n")
 	fmt.Fprintf(&b, "cardinal_wings_tasks_failed_total %d\n", failed)
 	fmt.Fprintf(&b, "cardinal_wings_tasks_running %d\n", running)
 	fmt.Fprintf(&b, "cardinal_wings_tasks_succeeded_total %d\n", succeeded)
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_tasks_failed_total counter\n")
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_tasks_running gauge\n")
-	fmt.Fprintf(&b, "# TYPE cardinal_wings_tasks_succeeded_total counter\n")
+	fmt.Fprintf(&b, "\n")
 
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

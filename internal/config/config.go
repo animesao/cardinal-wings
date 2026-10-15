@@ -384,7 +384,7 @@ func (c *Config) Validate() error {
 
 func isExternal(host string) bool {
 	switch host {
-	case "", "localhost", "127.0.0.1", "::1":
+	case "localhost", "127.0.0.1", "::1":
 		return false
 	}
 	return true

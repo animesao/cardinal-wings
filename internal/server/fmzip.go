@@ -63,8 +63,8 @@ func zipDir(root string) ([]byte, error) {
 		if err != nil {
 			return err
 		}
-		defer f.Close()
 		n, err := io.Copy(fw, io.LimitReader(f, maxZipBytes-total+1))
+		_ = f.Close()
 		total += n
 		if err != nil {
 			return err

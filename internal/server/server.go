@@ -111,13 +111,14 @@ func Run(cfg *config.Config) error {
 	bootstrapRoutes(api, mw)
 	systemRoutes(api, mw)
 	panelRoutes(api, mw)
-	clusterRoutes(api)
+	clusterRoutes(api, mw)
 
 	// The authenticated chain: CORS -> per-key rate limit -> per-IP rate
-	// limit -> bearer auth -> audit.
+	// limit -> bearer auth -> audit (audit runs last so key name and role
+	// are already in the request context).
 	var handler http.Handler = api
-	handler = mw.Authenticate(handler)
 	handler = auditMiddleware(handler)
+	handler = mw.Authenticate(handler)
 	handler = mw.RateLimitKey(handler)
 	handler = mw.RateLimit(handler)
 	handler = mw.CORS(handler)

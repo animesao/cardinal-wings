@@ -33,6 +33,18 @@ func registerNodes(entries []nodeEntry) {
 	registry.nodes = entries
 }
 
+// isLocal reports whether name is this wings host.
+func (nr *nodeRegistry) isLocal(name string) bool {
+	nr.mu.RLock()
+	defer nr.mu.RUnlock()
+	for _, n := range nr.nodes {
+		if n.name == name {
+			return n.local
+		}
+	}
+	return false
+}
+
 // local returns the local node client, or nil if not yet started.
 func (nr *nodeRegistry) local() *runtime.Client {
 	nr.mu.RLock()

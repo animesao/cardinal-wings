@@ -244,14 +244,46 @@ type jailFS struct {
 	root string
 }
 
-// resolve clamps a client-supplied path inside the jail root.
+// resolve clamps a client-supplied path inside the jail root and rejects
+// symlinks that point outside it (same rule as the file manager: the nearest
+// existing parent is resolved when the path itself may not exist yet, so new
+// files cannot escape via a symlinked directory either).
 func (fs jailFS) resolve(p string) (string, error) {
+	return fs.resolveAllowMissing(p, false)
+}
+
+func (fs jailFS) resolveAllowMissing(p string, allowMissing bool) (string, error) {
 	if p == "" {
 		p = "/"
 	}
 	clean := path.Clean("/" + p)
 	full := filepath.Join(fs.root, filepath.FromSlash(clean))
 	rel, err := filepath.Rel(fs.root, full)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", os.ErrPermission
+	}
+	check := full
+	if allowMissing {
+		for {
+			if _, statErr := os.Lstat(check); statErr == nil {
+				break
+			}
+			next := filepath.Dir(check)
+			if next == check {
+				return "", os.ErrNotExist
+			}
+			check = next
+		}
+	}
+	real, err := filepath.EvalSymlinks(check)
+	if err != nil {
+		return "", err
+	}
+	rootReal, err := filepath.EvalSymlinks(fs.root)
+	if err != nil {
+		return "", err
+	}
+	rel, err = filepath.Rel(rootReal, real)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return "", os.ErrPermission
 	}
@@ -267,7 +299,7 @@ func (fs jailFS) Fileread(r *sftp.Request) (io.ReaderAt, error) {
 }
 
 func (fs jailFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
-	p, err := fs.resolve(r.Filepath)
+	p, err := fs.resolveAllowMissing(r.Filepath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +312,7 @@ func (fs jailFS) Filewrite(r *sftp.Request) (io.WriterAt, error) {
 }
 
 func (fs jailFS) Filecmd(r *sftp.Request) error {
-	p, err := fs.resolve(r.Filepath)
+	p, err := fs.resolveAllowMissing(r.Filepath, true)
 	if err != nil {
 		return err
 	}
@@ -292,17 +324,17 @@ func (fs jailFS) Filecmd(r *sftp.Request) error {
 	case "Remove":
 		return os.Remove(p)
 	case "Rename":
-		dst, err := fs.resolve(r.Target)
+		dst, err := fs.resolveAllowMissing(r.Target, true)
 		if err != nil {
 			return err
 		}
 		return os.Rename(p, dst)
 	case "Symlink":
-		dst, err := fs.resolve(r.Target)
+		dst, err := fs.resolveAllowMissing(r.Target, true)
 		if err != nil {
 			return err
 		}
-		return os.Symlink(p, dst)
+		return os.Symlink(r.Filepath, dst)
 	case "Truncate":
 		attrs := r.Attributes()
 		return os.Truncate(p, int64(attrs.Size))
@@ -612,15 +644,18 @@ func handleSSHSession(ch ssh.Channel, reqs <-chan *ssh.Request, containerID stri
 			// after a fresh node install) — start the container for the
 			// session, as before, so SFTP still works.
 			logf("sftp: mount %s failed, trying temporary start: %v", containerID, err)
-			root, err = sftpRootViaStart(containerID)
+			var started bool
+			root, started, err = sftpRootViaStart(containerID)
 			if err != nil {
 				_, _ = io.WriteString(ch, "sftp: container data unavailable\r\n")
 				return
 			}
 			release = nil
-			defer func() {
-				tryStopContainer(containerID)
-			}()
+			if started {
+				defer func() {
+					tryStopContainer(containerID)
+				}()
+			}
 		}
 
 		fs := jailFS{root: root}
@@ -642,10 +677,11 @@ func handleSSHSession(ch ssh.Channel, reqs <-chan *ssh.Request, containerID stri
 
 // sftpRootViaStart starts a stopped container so its overlay mounts, then
 // returns the data root for the session. The caller stops it again on the way
-// out; if the start itself fails we stop it here so a container started only
-// for SFTP is never left running.
-func sftpRootViaStart(containerID string) (string, error) {
-	tryStartContainer(containerID)
+// out, but only when this call actually started it — never touch a container
+// that was already running. On failure the container is stopped too, so a
+// container started only for SFTP is never left running.
+func sftpRootViaStart(containerID string) (string, bool, error) {
+	started := tryStartContainer(containerID)
 	root, mounted, err := containerDataRoot(containerID)
 	// The overlay mounts asynchronously after the init starts; poll briefly
 	// for the data dir to appear before giving up.
@@ -654,10 +690,12 @@ func sftpRootViaStart(containerID string) (string, error) {
 		root, mounted, err = containerDataRoot(containerID)
 	}
 	if err != nil || !mounted {
-		tryStopContainer(containerID)
-		return "", fmt.Errorf("container data unavailable")
+		if started {
+			tryStopContainer(containerID)
+		}
+		return "", false, fmt.Errorf("container data unavailable")
 	}
-	return root, nil
+	return root, started, nil
 }
 
 // tryStartContainer asks the local cardinal node to start a container. It

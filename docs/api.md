@@ -9,8 +9,9 @@ Errors are always `{"error": {"code": "...", "message": "..."}}` with one of:
 
 ## Node routing
 
-Every resource endpoint accepts `?node=<name>` to target a specific cardinal
-node (default: the local node):
+Most resource endpoints accept `?node=<name>` to target a specific cardinal
+node (default: the local node). Local-only exceptions (501 or local execution):
+networks, volumes, services, functions, blueprints install, image pull.
 
 ```bash
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers?node=node-2"
@@ -54,7 +55,7 @@ curl -H "Authorization: Bearer KEY" localhost:8080/v1/nodes
 # Dashboard aggregate: per-node containers/images/cpu/mem + totals
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/system/info
 
-# Prometheus metrics (admin only)
+# Prometheus metrics (admin; any key when [remote] metrics_requires_auth=false)
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/metrics
 ```
 
@@ -66,9 +67,9 @@ curl -H "Authorization: Bearer KEY" localhost:8080/v1/metrics
 #        limit default 100, capped at 1000, offset default 0)
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers?state=running&limit=50"
 
-# Create (admin)
+# Create (admin) — ports are objects, not "host:container" strings
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
-  -d '{"image":"nginx:latest","name":"web","ports":["8080:80"],"restart":"always"}' \
+  -d '{"image":"nginx:latest","name":"web","ports":[{"host":8080,"container":80}],"restart":"always"}' \
   localhost:8080/v1/containers
 
 # Inspect

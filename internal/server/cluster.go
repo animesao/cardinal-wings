@@ -6,12 +6,13 @@ import (
 	"strings"
 
 	"github.com/animesao/cardinal-wings/internal/agent"
+	"github.com/animesao/cardinal-wings/internal/auth"
 )
 
 // clusterRoutes mounts the cluster node endpoints. These aggregate the local
 // node and any configured remote cluster nodes; an optional `?node=<name>`
 // selects a specific node for the underlying cardinal calls.
-func clusterRoutes(mux *http.ServeMux) {
+func clusterRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 	mux.HandleFunc("/v1/nodes", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -83,25 +84,27 @@ func clusterRoutes(mux *http.ServeMux) {
 			}
 			writeJSON(w, http.StatusOK, map[string]interface{}{"replicas": out})
 		case http.MethodPost:
-			c, ok := clientFor(w, r)
-			if !ok {
-				return
-			}
-			var req map[string]interface{}
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-				return
-			}
-			if _, hasImage := req["image"]; !hasImage {
-				writeError(w, http.StatusBadRequest, "image required")
-				return
-			}
-			out, err := c.ReplicaCreate(r.Context(), req)
-			if err != nil {
-				writeErr(w, http.StatusBadGateway, ErrUpstream, "replica create: %s", err.Error())
-				return
-			}
-			writeJSON(w, http.StatusCreated, out)
+			mw.AdminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				c, ok := clientFor(w, r)
+				if !ok {
+					return
+				}
+				var req map[string]interface{}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+					return
+				}
+				if _, hasImage := req["image"]; !hasImage {
+					writeError(w, http.StatusBadRequest, "image required")
+					return
+				}
+				out, err := c.ReplicaCreate(r.Context(), req)
+				if err != nil {
+					writeErr(w, http.StatusBadGateway, ErrUpstream, "replica create: %s", err.Error())
+					return
+				}
+				writeJSON(w, http.StatusCreated, out)
+			})).ServeHTTP(w, r)
 		default:
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 		}
@@ -112,21 +115,23 @@ func clusterRoutes(mux *http.ServeMux) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		c, ok := clientFor(w, r)
-		if !ok {
-			return
-		}
-		id := strings.TrimPrefix(r.URL.Path, "/v1/cluster/replicas/")
-		if id == "" {
-			writeError(w, http.StatusBadRequest, "replica id required")
-			return
-		}
-		out, err := c.ReplicaRemove(r.Context(), id)
-		if err != nil {
-			writeErr(w, http.StatusBadGateway, ErrUpstream, "replica remove: %s", err.Error())
-			return
-		}
-		writeJSON(w, http.StatusOK, out)
+		mw.AdminOnly(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c, ok := clientFor(w, r)
+			if !ok {
+				return
+			}
+			id := strings.TrimPrefix(r.URL.Path, "/v1/cluster/replicas/")
+			if id == "" {
+				writeError(w, http.StatusBadRequest, "replica id required")
+				return
+			}
+			out, err := c.ReplicaRemove(r.Context(), id)
+			if err != nil {
+				writeErr(w, http.StatusBadGateway, ErrUpstream, "replica remove: %s", err.Error())
+				return
+			}
+			writeJSON(w, http.StatusOK, out)
+		})).ServeHTTP(w, r)
 	})
 
 	mux.HandleFunc("/v1/cluster/info", func(w http.ResponseWriter, r *http.Request) {

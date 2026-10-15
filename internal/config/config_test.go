@@ -110,6 +110,14 @@ func TestValidateRejectsExternalWithoutKeys(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsEmptyHostWithoutKeys(t *testing.T) {
+	cfg := Default()
+	cfg.Server.Host = ""
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for empty host with no keys (binds all interfaces)")
+	}
+}
+
 func TestValidateRejectsPartialTLS(t *testing.T) {
 	cfg := Default()
 	cfg.Server.Host = "0.0.0.0"

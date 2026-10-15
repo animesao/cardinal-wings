@@ -86,9 +86,12 @@ func summarizeNode(r *http.Request, name string) nodeSummary {
 		ns.Architecture = info.Architecture
 		ns.Hostname = info.Name
 	}
-	// Total disk from the host filesystem (wings runs on the node).
-	if total := diskTotalBytes(); total > 0 {
-		ns.DiskTotal = total
+	// Total disk from the host filesystem — local node only. Remote nodes
+	// would otherwise report this hub's disk as their own.
+	if registry.isLocal(name) {
+		if total := diskTotalBytes(); total > 0 {
+			ns.DiskTotal = total
+		}
 	}
 	// Cardinal version so the panel can warn on incompatibility.
 	if v, err := c.CardinalVersion(r.Context()); err == nil {
