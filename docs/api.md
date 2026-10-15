@@ -197,6 +197,10 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
 
 ## Backup (whole data dir as tar.gz)
 
+Snapshots work on stopped and unmounted containers: the overlay mounts
+on demand (same mechanism as SFTP sessions) instead of refusing with
+`no dedicated data mount`.
+
 ```bash
 # Daemon-local snapshots (panel "agent" driver):
 # create (202, async; completion is POSTed to the panel when linked)

@@ -42,10 +42,9 @@ func handleContainerBackup(w http.ResponseWriter, r *http.Request, ref string) {
 	// fmRoot probe is only a fallback for the unmounted-overlay case (e.g.
 	// after a host reboot before the container starts), where exec is the only
 	// way to ask the container where its data lives.
-	root := ""
-	if p, _, err := containerDataRoot(ref); err == nil {
-		root = p
-	} else {
+	release, root := ensureDataRoot(ref)
+	defer release()
+	if root == "" || root == "/" {
 		root = fmRoot(r.Context(), ref)
 	}
 	if root == "/" || root == "" {

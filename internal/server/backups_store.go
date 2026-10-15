@@ -69,10 +69,9 @@ func handleBackupRoute(w http.ResponseWriter, r *http.Request, ref string) {
 		}
 		var req backupRequest
 		if jerr := json.Unmarshal(body, &req); jerr == nil && (req.UUID != "" || req.BackupUUID != "" || req.DownloadURL != "") {
-			root := ""
-			if p, _, perr := containerDataRoot(ref); perr == nil {
-				root = p
-			} else {
+			release, root := ensureDataRoot(ref)
+			defer release()
+			if root == "" || root == "/" {
 				root = fmRoot(r.Context(), ref)
 			}
 			if root == "/" || root == "" {
@@ -117,10 +116,9 @@ func runBackupSnapshot(containerID, uuid, path string) {
 		reportBackupStatus(uuid, false, "", 0)
 	}
 
-	root := ""
-	if p, _, err := containerDataRoot(containerID); err == nil {
-		root = p
-	} else {
+	release, root := ensureDataRoot(containerID)
+	defer release()
+	if root == "" || root == "/" {
 		root = fmRoot(context.Background(), containerID)
 	}
 	if root == "/" || root == "" {

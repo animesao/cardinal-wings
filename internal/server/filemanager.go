@@ -208,6 +208,18 @@ func mountOverlaySession(id string) (*fmSession, error) {
 	return closeWithError(fmt.Errorf("container data directory is unavailable"))
 }
 
+func ensureDataRoot(ref string) (release func(), root string) {
+	if p, mounted, err := containerDataRoot(ref); err == nil && mounted {
+		return func() {}, p
+	}
+	if sftpLeaseInst != nil {
+		if root, release, err := sftpLeaseInst.acquire(ref); err == nil {
+			return release, root
+		}
+	}
+	return func() {}, ""
+}
+
 func (s *fmSession) cleanupMounts() {
 	if s == nil {
 		return
