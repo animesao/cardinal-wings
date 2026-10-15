@@ -178,7 +178,9 @@ curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/fm/downlo
 # → {"content":"<base64>","binary":true}
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"path":"/app/config.yml","content":"<base64>"}' localhost:8080/v1/containers/<id>/fm/write
-# fm/upload is an alias of fm/write (same base64 body)
+# fm/upload is an alias of fm/write (same base64 body).
+# Whole-file uploads up to 256 MiB (384 MiB base64 cap); ordinary JSON
+# bodies are capped at 8 MiB.
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"path":"/data/worlds"}' localhost:8080/v1/containers/<id>/fm/mkdir
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
