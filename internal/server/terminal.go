@@ -13,6 +13,10 @@ import (
 	"github.com/animesao/cardinal-wings/internal/ws"
 )
 
+// pendingFlushAfter bounds how long a newline-less fragment waits for
+// its line ending before going out as-is.
+const pendingFlushAfter = 300 * time.Millisecond
+
 // Default terminal dimensions (conventional fallback until the panel
 // reports its real viewport via resize).
 const (
@@ -37,6 +41,14 @@ type terminalSession struct {
 	generated uint64
 	cols      int
 	rows      int
+	// pending holds a trailing chunk without a newline: attach delivers
+	// fixed-size byte slices, so a line is routinely split across two
+	// broadcasts. Emitting halves separately breaks every consumer
+	// (the panel would render half-lines and fire line-based parsing
+	// mid-fragment). flushTimer pushes a long-held fragment through so
+	// newline-less progress output never stalls.
+	pending    string
+	flushTimer *time.Timer
 }
 
 // terminalManager tracks live terminal sessions per container id.
@@ -96,13 +108,44 @@ func (tm *terminalManager) open(ctx context.Context, containerID string) (*termi
 	return s, nil
 }
 
-// broadcast appends to the ring and forwards to subscribers.
+// broadcast appends to the ring and forwards to subscribers. Incomplete
+// trailing lines are held in pending until the newline arrives (or the
+// flush timer fires), so subscribers always receive whole lines — never
+// halves that render as broken rows and trigger line parsers mid-fragment.
 func (s *terminalSession) broadcast(line string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
 		return
 	}
+	// Control markers must travel intact: never glue them to a held fragment.
+	if line == "__session_ended__" || strings.HasPrefix(line, "__session_error__:") {
+		if s.pending != "" {
+			s.emitLocked(s.pending)
+			s.pending = ""
+		}
+		s.emitLocked(line)
+		return
+	}
+	buf := s.pending + line
+	s.pending = ""
+	if i := strings.LastIndexByte(buf, '\n'); i >= 0 {
+		s.emitLocked(buf[:i+1])
+		s.pending = buf[i+1:]
+	} else {
+		s.pending = buf
+	}
+	if s.pending != "" {
+		if s.flushTimer == nil {
+			s.flushTimer = time.AfterFunc(pendingFlushAfter, s.flushPending)
+		} else {
+			s.flushTimer.Reset(pendingFlushAfter)
+		}
+	}
+}
+
+// emitLocked records one complete chunk and forwards it to subscribers.
+func (s *terminalSession) emitLocked(line string) {
 	s.generated++
 	if len(s.ring) >= 200 {
 		s.ring = append(s.ring[1:], line)
@@ -115,6 +158,18 @@ func (s *terminalSession) broadcast(line string) {
 		default:
 		}
 	}
+}
+
+// flushPending pushes a newline-less fragment that waited too long
+// (progress output with \r, prompts). Runs on a timer, takes the lock.
+func (s *terminalSession) flushPending() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.pending == "" {
+		return
+	}
+	s.emitLocked(s.pending)
+	s.pending = ""
 }
 
 // subscribe returns a channel that replays the ring then live lines.
@@ -150,6 +205,13 @@ func (s *terminalSession) close() {
 		return
 	}
 	s.closed = true
+	if s.flushTimer != nil {
+		s.flushTimer.Stop()
+		s.flushTimer = nil
+	}
+	// Drop, don't emit, a leftover fragment: a half line at session end
+	// would replay as a broken row on the next subscribe.
+	s.pending = ""
 	close(s.done)
 	for ch := range s.subs {
 		delete(s.subs, ch)
