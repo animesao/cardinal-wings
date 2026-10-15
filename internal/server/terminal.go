@@ -268,10 +268,10 @@ func (s *terminalSession) writeInput(data string) error {
 		// reconnects instead of vanishing while responses persist.
 		// (Lossy like all broadcasts: a slow subscriber may miss it, the
 		// sender already rendered its own copy.)
+		// Durability (surviving session replacement) lives one layer down:
+		// cardinal's console-serve tees attach stdin into the container
+		// log, so the replay tail carries "> cmd" next to its answer.
 		s.broadcast(data)
-		// Durable echo: the cardinal log only carries output, so without
-		// this every replay would restore answers without their commands.
-		appendConsoleEcho(s.id, data)
 		return nil
 	case <-s.done:
 		return io.ErrClosedPipe
