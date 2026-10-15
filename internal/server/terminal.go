@@ -207,6 +207,9 @@ func (s *terminalSession) writeInput(data string) error {
 		// (Lossy like all broadcasts: a slow subscriber may miss it, the
 		// sender already rendered its own copy.)
 		s.broadcast(data)
+		// Durable echo: the cardinal log only carries output, so without
+		// this every replay would restore answers without their commands.
+		appendConsoleEcho(s.id, data)
 		return nil
 	case <-s.done:
 		return io.ErrClosedPipe
