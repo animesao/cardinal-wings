@@ -1,7 +1,6 @@
 # cardinal-wings
 
-> **Status: in active development.** Nothing stable, nothing to install. This
-> is the plan and an early skeleton.
+> **Status: v1 live.** REST API daemon used by the KT panel in production.
 
 cardinal-wings is a REST API daemon for managing
 [cardinal](https://github.com/animesao/cardinal) over HTTP. It's the single

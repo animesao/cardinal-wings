@@ -1,6 +1,6 @@
 // Package server wires the HTTP daemon: routing, middleware chain, and the
-// v1 API handlers. Container endpoints are live (Phase 1); image, blueprint,
-// cluster and streaming handlers land in later phases.
+// v1 API handlers. Route files by area: containers, images, blueprints,
+// cluster, services, tasks, file manager, backups, terminal, events.
 package server
 
 import (

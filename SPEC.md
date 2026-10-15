@@ -1,6 +1,6 @@
 # cardinal-wings — technical specification
 
-> **Status:** in development — nothing stable yet. This document is the plan.
+> **Status:** v1 live — this document describes the implemented API.
 
 cardinal-wings is a **REST API daemon for managing cardinal over HTTP**. It is
 the single entry point a control plane / web panel (e.g. `cardinal-panel`)
