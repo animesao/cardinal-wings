@@ -201,6 +201,12 @@ func (s *terminalSession) writeInput(data string) error {
 	defer timer.Stop()
 	select {
 	case s.stdinCh <- data:
+		// PTY-like echo: everyone watching the session sees what was typed,
+		// and the line joins the replay ring — sent commands survive
+		// reconnects instead of vanishing while responses persist.
+		// (Lossy like all broadcasts: a slow subscriber may miss it, the
+		// sender already rendered its own copy.)
+		s.broadcast(data)
 		return nil
 	case <-s.done:
 		return io.ErrClosedPipe
