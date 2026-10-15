@@ -1,5 +1,6 @@
 // sftp.go implements a full SSH/SFTP server inside wings. The panel assigns a
-// username/password per container (bcrypt-hashed on disk); every SFTP session
+// username/password per user (owner: srv-<server8>, each member:
+// srv-<server8>-<user8>; bcrypt-hashed on disk); every SFTP session
 // is jailed to that container's data directory on the host filesystem, so
 // users can point Filezilla / WinSCP straight at their container without an
 // sshd running inside the image.
@@ -44,18 +45,22 @@ import (
 
 // ─── Credential store ────────────────────────────────────
 
-// sftpEntry is one container's SFTP credential, stored bcrypt-hashed.
+// sftpEntry is one user's SFTP credential for one container, bcrypt-hashed.
+// Usernames are unique per node (srv-<server8>-<user8> for members,
+// srv-<server8> for the owner), so several users can hold credentials
+// for the same container at once.
 type sftpEntry struct {
 	Username     string `json:"username"`
 	PasswordHash string `json:"password_hash"`
 	ContainerID  string `json:"container_id"`
 }
 
-// sftpStore persists SFTP users to a JSON file next to the audit log.
+// sftpStore persists SFTP users to a JSON file next to the audit log,
+// keyed by username.
 type sftpStore struct {
-	mu   sync.RWMutex
-	path string
-	byID map[string]*sftpEntry // container id → entry
+	mu    sync.RWMutex
+	path  string
+	users map[string]*sftpEntry // username → entry
 }
 
 func loadSFTPStore() (*sftpStore, error) {
@@ -64,8 +69,8 @@ func loadSFTPStore() (*sftpStore, error) {
 		return nil, err
 	}
 	s := &sftpStore{
-		path: filepath.Join(dir, "sftp-users.json"),
-		byID: map[string]*sftpEntry{},
+		path:  filepath.Join(dir, "sftp-users.json"),
+		users: map[string]*sftpEntry{},
 	}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
@@ -74,16 +79,22 @@ func loadSFTPStore() (*sftpStore, error) {
 		}
 		return nil, err
 	}
-	_ = json.Unmarshal(data, &s.byID)
-	if s.byID == nil {
-		s.byID = map[string]*sftpEntry{}
+	raw := map[string]*sftpEntry{}
+	_ = json.Unmarshal(data, &raw)
+	for _, e := range raw {
+		if e == nil || e.Username == "" {
+			continue
+		}
+		// Old format was keyed by container id; re-key by username so
+		// pre-existing owner credentials survive the upgrade.
+		s.users[e.Username] = e
 	}
 	return s, nil
 }
 
 func (s *sftpStore) save() error {
 	s.mu.RLock()
-	data, err := json.MarshalIndent(s.byID, "", "  ")
+	data, err := json.MarshalIndent(s.users, "", "  ")
 	s.mu.RUnlock()
 	if err != nil {
 		return err
@@ -95,30 +106,39 @@ func (s *sftpStore) save() error {
 	return os.Rename(tmp, s.path)
 }
 
-// set upserts the credential for a container. Any older entries with the same
-// username are removed first: container ids change on every recreate (image
-// change / reinstall), so the same username may exist under several ids, and
-// entryByUsername walks a map in non-deterministic order — duplicates would
-// make authentication randomly fail with "access denied".
+// set upserts one user's credential for a container. The same username under
+// a new container id (image change / reinstall) simply overwrites: usernames
+// embed the server identity, so recreates never collide with other users.
 func (s *sftpStore) set(containerID, username, password string) error {
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
 	s.mu.Lock()
-	for id, e := range s.byID {
-		if e.Username == username {
-			delete(s.byID, id)
-		}
-	}
-	s.byID[containerID] = &sftpEntry{Username: username, PasswordHash: string(hash), ContainerID: containerID}
+	s.users[username] = &sftpEntry{Username: username, PasswordHash: string(hash), ContainerID: containerID}
 	s.mu.Unlock()
 	return s.save()
 }
 
+// remove drops every credential of a container (server delete).
 func (s *sftpStore) remove(containerID string) error {
 	s.mu.Lock()
-	delete(s.byID, containerID)
+	for username, e := range s.users {
+		if e.ContainerID == containerID {
+			delete(s.users, username)
+		}
+	}
+	s.mu.Unlock()
+	return s.save()
+}
+
+// removeUser drops one user's credential for a container (member removed or
+// file access revoked). Other users of the same container are untouched.
+func (s *sftpStore) removeUser(containerID, username string) error {
+	s.mu.Lock()
+	if e, ok := s.users[username]; ok && e.ContainerID == containerID {
+		delete(s.users, username)
+	}
 	s.mu.Unlock()
 	return s.save()
 }
@@ -126,19 +146,20 @@ func (s *sftpStore) remove(containerID string) error {
 func (s *sftpStore) entryByUsername(username string) (*sftpEntry, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	for _, e := range s.byID {
-		if e.Username == username {
-			return e, true
-		}
-	}
-	return nil, false
+	e, ok := s.users[username]
+	return e, ok
 }
 
-func (s *sftpStore) entryByContainer(containerID string) (*sftpEntry, bool) {
+func (s *sftpStore) usernamesForContainer(containerID string) []string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	e, ok := s.byID[containerID]
-	return e, ok
+	var out []string
+	for _, e := range s.users {
+		if e.ContainerID == containerID {
+			out = append(out, e.Username)
+		}
+	}
+	return out
 }
 
 func wingsDataDir() string {
@@ -751,20 +772,17 @@ func listenerHost() string {
 	return "0.0.0.0"
 }
 
-// handleSftpStatus returns whether a container has SFTP credentials.
+// handleSftpStatus returns whether a container has SFTP credentials,
+// and which usernames hold them (several users can share a container).
 func handleSftpStatus(w http.ResponseWriter, r *http.Request, containerID string) {
 	if sftpStoreInst == nil {
 		writeJSON(w, http.StatusOK, map[string]interface{}{"enabled": false})
 		return
 	}
-	e, ok := sftpStoreInst.entryByContainer(containerID)
-	username := ""
-	if ok {
-		username = e.Username
-	}
+	usernames := sftpStoreInst.usernamesForContainer(containerID)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"enabled":  ok,
-		"username": username,
+		"enabled":   len(usernames) > 0,
+		"usernames": usernames,
 	})
 }
 
@@ -814,10 +832,17 @@ func handleSftpSet(w http.ResponseWriter, r *http.Request, containerID string) {
 	})
 }
 
-// handleSftpDelete removes the SFTP credential for a container.
+// handleSftpDelete removes SFTP credentials: one user (?username=) or the
+// whole container (server delete).
 func handleSftpDelete(w http.ResponseWriter, r *http.Request, containerID string) {
 	if sftpStoreInst != nil {
-		if err := sftpStoreInst.remove(containerID); err != nil {
+		var err error
+		if username := r.URL.Query().Get("username"); username != "" {
+			err = sftpStoreInst.removeUser(containerID, username)
+		} else {
+			err = sftpStoreInst.remove(containerID)
+		}
+		if err != nil {
 			writeErr(w, http.StatusInternalServerError, ErrInternal, "remove sftp credential: %s", err.Error())
 			return
 		}

@@ -317,7 +317,10 @@ curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/bootstrap/ensure
 
 Wings runs an embedded SSH/SFTP server (default port `2022`, config:
 `[server] sftp_enabled / sftp_host / sftp_port`). The panel assigns a
-username/password per container; every SFTP session is jailed to that
+username/password **per user**: the owner gets `srv-<server8>`, each member
+`srv-<server8>-<user8>` — several users can hold credentials for one
+container at once (store is keyed by username; old container-keyed files
+are re-keyed on load). Every SFTP session is jailed to that
 container's data directory on the host (`merged/data` or
 `merged/home/container`), so users can connect with any SFTP client
 (Filezilla, WinSCP, …) directly to the container — including stopped ones.
@@ -338,11 +341,12 @@ curl -X PUT -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   localhost:8080/v1/containers/<id>/sftp
 # → {"ok":true,"username":"srv-abc123","port":2022}
 
-# SFTP status for a container
+# SFTP status for a container (all credential holders)
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/sftp
-# → {"enabled":true,"username":"srv-abc123"}
+# → {"enabled":true,"usernames":["srv-abc123","srv-abc123-du456789"]}
 
-# Remove a container's SFTP credential (admin)
+# Remove one user's credential, or the whole container's (admin)
+curl -X DELETE -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/sftp?username=srv-abc123-du456789"
 curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/sftp
 ```
 
