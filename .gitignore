@@ -9,3 +9,7 @@
 
 # generated config
 config.toml
+
+# runtime audit log (created at startup, rotated at 10 MiB)
+wings-audit.jsonl
+wings-audit.jsonl.1
