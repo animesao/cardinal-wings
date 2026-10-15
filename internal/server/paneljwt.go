@@ -36,54 +36,79 @@ type panelClaims struct {
 	NotBefore   int64    `json:"nbf"`
 }
 
-// verifyPanelJWT checks the signature against every configured API key and
-// returns the claims. Expiry is enforced by the caller where "expiring soon"
-// warnings are needed; here we only reject already-invalid tokens when
-// strict is true.
-func verifyPanelJWT(token string, cfg *config.Config, strictExpiry bool) (*panelClaims, error) {
+// maxPanelJWTTTL caps token lifetime: even a leaked signing key only buys
+// the attacker a bounded window (the panel mints 5-10 minute tokens).
+const maxPanelJWTTTL = 24 * time.Hour
+
+// verifyPanelJWT checks the HS256 signature against every configured API key
+// and returns the claims plus the role of the key that signed them.
+// Callers must downgrade write permissions for non-admin roles: a stolen
+// readonly key must never mint itself control.* powers.
+func verifyPanelJWT(token string, cfg *config.Config, strictExpiry bool) (*panelClaims, config.Role, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
-		return nil, fmt.Errorf("jwt: malformed token")
+		return nil, "", fmt.Errorf("jwt: malformed token")
+	}
+	var header struct {
+		Alg string `json:"alg"`
+		Typ string `json:"typ"`
+	}
+	if raw, err := base64.RawURLEncoding.DecodeString(parts[0]); err != nil {
+		return nil, "", fmt.Errorf("jwt: bad header encoding")
+	} else if err := json.Unmarshal(raw, &header); err != nil {
+		return nil, "", fmt.Errorf("jwt: bad header JSON")
+	} else if header.Alg != "HS256" {
+		return nil, "", fmt.Errorf("jwt: unexpected alg")
 	}
 	signingInput := parts[0] + "." + parts[1]
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
 	if err != nil {
-		return nil, fmt.Errorf("jwt: bad signature encoding")
+		return nil, "", fmt.Errorf("jwt: bad signature encoding")
 	}
 
 	matched := false
+	var role config.Role
 	for _, k := range cfg.Keys {
 		mac := hmac.New(sha256.New, []byte(k.Key))
 		mac.Write([]byte(signingInput))
 		if subtle.ConstantTimeCompare(sig, mac.Sum(nil)) == 1 {
 			matched = true
+			role = k.Role
 			break
 		}
 	}
 	if !matched {
-		return nil, fmt.Errorf("jwt: signature mismatch (denylist)")
+		return nil, "", fmt.Errorf("jwt: signature mismatch (denylist)")
 	}
 
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil {
-		return nil, fmt.Errorf("jwt: bad claims encoding")
+		return nil, "", fmt.Errorf("jwt: bad claims encoding")
 	}
 	var claims panelClaims
 	if err := json.Unmarshal(payload, &claims); err != nil {
-		return nil, fmt.Errorf("jwt: bad claims JSON")
+		return nil, "", fmt.Errorf("jwt: bad claims JSON")
 	}
 
 	now := time.Now().Unix()
-	if claims.ExpiresAt > 0 && now > claims.ExpiresAt {
-		return nil, fmt.Errorf("jwt: exp claim is invalid")
+	// Eternal tokens (no exp) are rejected: every legitimate panel flow
+	// sets exp, and an exp-less token would survive key rotation forever.
+	if claims.ExpiresAt <= 0 {
+		return nil, "", fmt.Errorf("jwt: exp claim is required")
+	}
+	if now > claims.ExpiresAt {
+		return nil, "", fmt.Errorf("jwt: exp claim is invalid")
+	}
+	if claims.ExpiresAt-now > int64(maxPanelJWTTTL/time.Second) {
+		return nil, "", fmt.Errorf("jwt: TTL exceeds maximum")
 	}
 	if claims.NotBefore > 0 && now+60 < claims.NotBefore {
-		return nil, fmt.Errorf("jwt: created too far in past (denylist)")
+		return nil, "", fmt.Errorf("jwt: created too far in past (denylist)")
 	}
-	if strictExpiry && claims.ExpiresAt > 0 && now > claims.ExpiresAt {
-		return nil, fmt.Errorf("jwt: token expired")
+	if strictExpiry && now > claims.ExpiresAt {
+		return nil, "", fmt.Errorf("jwt: token expired")
 	}
-	return &claims, nil
+	return &claims, role, nil
 }
 
 // hasScope reports whether the space-joined scope claim contains want.

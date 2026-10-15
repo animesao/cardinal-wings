@@ -152,8 +152,24 @@ func handleImageRef(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"tagged": repo, "from": ref})
 
 	case action == "push" && r.Method == http.MethodPost:
+		// Credentials via JSON body (preferred — never logged in URLs);
+		// query params stay as a legacy fallback.
 		user := r.URL.Query().Get("username")
 		pass := r.URL.Query().Get("password")
+		if r.Header.Get("Content-Type") == "application/json" && r.ContentLength != 0 {
+			var creds struct {
+				Username string `json:"username"`
+				Password string `json:"password"`
+			}
+			if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&creds); err == nil {
+				if creds.Username != "" {
+					user = creds.Username
+				}
+				if creds.Password != "" {
+					pass = creds.Password
+				}
+			}
+		}
 		if err := c.PushImage(r.Context(), ref, user, pass); err != nil {
 			writeErr(w, http.StatusInternalServerError, ErrInternal, "push %s: %s", ref, err.Error())
 			return

@@ -13,7 +13,11 @@ func TestIsMutatingNewActions(t *testing.T) {
 			t.Errorf("isMutating(%q, POST) = false, want true", a)
 		}
 	}
-	reads := []string{"top", "changes", "export", "ports", "fm/download-zip"}
+	// export dumps the whole container filesystem: admin-only even over GET.
+	if !isMutating("export", http.MethodGet) {
+		t.Errorf("isMutating(%q, GET) = false, want true (full FS dump)", "export")
+	}
+	reads := []string{"top", "changes", "ports", "fm/download-zip"}
 	for _, a := range reads {
 		if isMutating(a, http.MethodGet) {
 			t.Errorf("isMutating(%q, GET) = true, want false (read)", a)

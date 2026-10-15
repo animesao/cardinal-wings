@@ -25,6 +25,12 @@ func handleContainerRename(w http.ResponseWriter, r *http.Request, ref string, c
 		writeError(w, http.StatusBadRequest, "name required (?name= or {\"name\": ...})")
 		return
 	}
+	// Container names travel into cardinal paths and state files: keep them
+	// to the safe charset so ?name= cannot smuggle queries or separators.
+	if !validContainerName(name) {
+		writeError(w, http.StatusBadRequest, "invalid container name (letters, digits, _, ., -)")
+		return
+	}
 	if err := c.Rename(r.Context(), ref, name); err != nil {
 		writeErr(w, http.StatusBadGateway, ErrUpstream, "rename %s: %s", ref, err.Error())
 		return

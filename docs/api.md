@@ -67,7 +67,9 @@ curl -H "Authorization: Bearer KEY" localhost:8080/v1/metrics
 #        limit default 100, capped at 1000, offset default 0)
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers?state=running&limit=50"
 
-# Create (admin) — ports are objects, not "host:container" strings
+# Create (admin) — ports are objects, not "host:container" strings.
+# Volumes accept cardinal NAMED volumes only (e.g. "srv-<name>"); host bind
+# mounts ("/etc:/data") and remote filesystems are refused.
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"image":"nginx:latest","name":"web","ports":[{"host":8080,"container":80}],"restart":"always"}' \
   localhost:8080/v1/containers
@@ -101,14 +103,15 @@ curl -N -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/jso
   -d '{"Cmd":["tail","-f","/var/log/app.log"]}' \
   localhost:8080/v1/containers/<id>/exec/stream
 
-# Rename / top / wait / changes / export (top/changes/export are reads;
-# rename also takes {"name"}, commit takes {repo,tag,ref} or ?repo&?tag)
+# Rename / top / wait / changes (top/changes are reads;
+# rename also takes {"name"} — names limited to letters/digits/_/./-,
+# commit takes {repo,tag,ref} or ?repo&?tag)
 curl -X POST -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/rename?name=web2"
 curl -H "Authorization: Bearer KEY" "localhost:8080/v1/containers/<id>/top?ps_args=aux"
 curl -X POST -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/wait
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/changes
+# Export dumps the whole container filesystem, admin-only:
 curl -H "Authorization: Bearer KEY" localhost:8080/v1/containers/<id>/export -o container.tar
-
 # Commit an image from a container (admin)
 curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
   -d '{"repo":"myapp","tag":"v1"}' localhost:8080/v1/containers/<id>/commit
@@ -291,7 +294,11 @@ then each stopped ref is inspected and started with a 1 s stagger.
 
 The panel signs short-lived JWTs (HMAC-SHA256 with the node daemon token,
 which is a wings API key) for direct browser↔daemon traffic. Wings verifies
-them against its configured keys — the React client works unchanged:
+them against its configured keys — the React client works unchanged.
+Token rules: `alg` must be HS256, `exp` is required (max TTL 24h; the panel
+uses 5–10 min), and a token signed by a readonly key is read-only on the
+console (control.* permissions are stripped — only `websocket.connect`
+survives).
 
 ```text
 GET  /download/file?token=…        scope file-download (claims server_uuid + file_path)
@@ -381,9 +388,11 @@ curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" 
   localhost:8080/v1/images/postgres:16/pull
 # → {"task_id":"task-3","action":"pull","image":"postgres:16"}
 
-# Tag / push (admin)
+# Tag / push (admin). Registry credentials go in the JSON body
+# (preferred — query params end up in logs); ?username=&password= still works.
 curl -X POST -H "Authorization: Bearer KEY" "localhost:8080/v1/images/nginx:latest/tag?repo=myreg/nginx&tag=v1"
-curl -X POST -H "Authorization: Bearer KEY" "localhost:8080/v1/images/myreg/nginx:v1/push"
+curl -X POST -H "Authorization: Bearer KEY" -H "Content-Type: application/json" \
+  -d '{"username":"u","password":"secret"}' localhost:8080/v1/images/myreg/nginx:v1/push
 
 # Remove (admin)
 curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/images/nginx:latest
@@ -517,12 +526,13 @@ curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/replicas
 
 ```toml
 [server]
-host = "127.0.0.1"
-port = 8080
+host = "127.0.0.1"   # loopback default; external binds REQUIRE tls_cert/tls_key
+port = 8080          # (refused at startup otherwise) + strong keys (min 12 chars,
+                     # no placeholders like "change-me")
 
 [[keys]]
 name = "main"
-key = "change-me"
+key = "change-me"    # generate a real secret before exposing wings
 role = "admin"
 
 [[nodes]]                       # optional remote cluster nodes

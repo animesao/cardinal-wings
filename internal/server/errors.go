@@ -3,6 +3,9 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // ErrorCode is a stable machine-readable identifier a panel can switch on.
@@ -38,8 +41,29 @@ func writeErr(w http.ResponseWriter, status int, code ErrorCode, format string, 
 		msg = fmt.Sprintf(format, args...)
 	}
 	writeJSON(w, status, map[string]interface{}{
-		"error": apiError{Code: code, Message: msg, Status: status},
+		"error": apiError{Code: code, Message: redactHostPaths(msg), Status: status},
 	})
+}
+
+// redactHostPaths replaces absolute host state-directory prefixes in error
+// text with a stable placeholder. Backend errors (mount output, cardinal
+// messages, os errors) otherwise disclose real host paths
+// (/root/.cardinal/overlay/…) to every API caller, including readonly keys.
+func redactHostPaths(msg string) string {
+	for _, dir := range []string{wingsDataDir(), cardinalDataDir()} {
+		if dir == "" || dir == "/" {
+			continue
+		}
+		msg = strings.ReplaceAll(msg, dir, "[data-dir]")
+		// Match even when separators differ (Windows-style in messages).
+		if alt := strings.ReplaceAll(dir, string(filepath.Separator), "/"); alt != dir {
+			msg = strings.ReplaceAll(msg, alt, "[data-dir]")
+		}
+	}
+	if home := os.Getenv("HOME"); home != "" {
+		msg = strings.ReplaceAll(msg, home, "~")
+	}
+	return msg
 }
 
 // writeError keeps the short (status + message) signature as a compatible

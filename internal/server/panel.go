@@ -58,9 +58,17 @@ func handleContainerReinstall(w http.ResponseWriter, r *http.Request, ref string
 	if req.Name == "" {
 		req.Name = ref
 	}
+	if !validContainerName(req.Name) {
+		writeError(w, http.StatusBadRequest, "invalid container name (letters, digits, _, ., -)")
+		return
+	}
 	for i := range req.Volumes {
 		if req.Volumes[i].Source == "" {
 			req.Volumes[i].Source = "srv-" + req.Name
+		}
+		if err := validateVolumeSource(req.Volumes[i].Source); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
 
@@ -140,21 +148,13 @@ func handleContainerPull(w http.ResponseWriter, r *http.Request, ref string) {
 		return
 	}
 
-	dl, err := http.NewRequestWithContext(r.Context(), http.MethodGet, req.URL, nil)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, ErrUpstream, "pull request: %s", err.Error())
-		return
-	}
-	resp, err := http.DefaultClient.Do(dl)
+	dl, err := fetchGet(r.Context(), req.URL)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, ErrUpstream, "pull download: %s", err.Error())
 		return
 	}
+	resp := dl
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		writeErr(w, http.StatusBadGateway, ErrUpstream, "pull download: status %d", resp.StatusCode)
-		return
-	}
 	f, err := os.Create(dest)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, ErrUpstream, "pull write: %s", err.Error())

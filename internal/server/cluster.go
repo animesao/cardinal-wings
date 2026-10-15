@@ -7,6 +7,7 @@ import (
 
 	"github.com/animesao/cardinal-wings/internal/agent"
 	"github.com/animesao/cardinal-wings/internal/auth"
+	"github.com/animesao/cardinal-wings/internal/config"
 )
 
 // clusterRoutes mounts the cluster node endpoints. These aggregate the local
@@ -20,6 +21,8 @@ func clusterRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 		}
 		names := registry.names()
 		snapshot := checker.snapshot()
+		role, _ := auth.RoleFrom(r.Context())
+		admin := role == config.RoleAdmin
 		nodes := make([]map[string]interface{}, 0, len(names))
 		for _, name := range names {
 			c := registry.byName(name)
@@ -28,13 +31,18 @@ func clusterRoutes(mux *http.ServeMux, mw *auth.Middleware) {
 			}
 			node := map[string]interface{}{
 				"name":  name,
-				"url":   c.Base(),
 				"local": name == "local",
+			}
+			// Internal serve URLs and backend error text are admin-only:
+			// readonly keys get names + liveness for dashboards, nothing
+			// to aim SSRF or fingerprinting at.
+			if admin {
+				node["url"] = c.Base()
 			}
 			if st, ok := snapshot[name]; ok {
 				node["status"] = st.status
 				node["checked_at"] = st.checkedAt
-				if st.err != "" {
+				if admin && st.err != "" {
 					node["error"] = st.err
 				}
 			} else {

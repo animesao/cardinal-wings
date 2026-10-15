@@ -52,7 +52,7 @@ func panelBrowserRoutes(mux *http.ServeMux, cfg *config.Config) {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
-		claims, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
+		claims, _, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
@@ -83,7 +83,7 @@ func panelBrowserRoutes(mux *http.ServeMux, cfg *config.Config) {
 
 // handleBrowserDownload verifies the file-download JWT and streams the file.
 func handleBrowserDownload(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
-	claims, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
+	claims, _, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -140,7 +140,7 @@ func handleBrowserDownload(w http.ResponseWriter, r *http.Request, cfg *config.C
 // handleBrowserUpload verifies the file-upload JWT and stores multipart
 // files into ?directory= (default /).
 func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
-	claims, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
+	claims, _, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
@@ -256,11 +256,23 @@ func handleLegacyWS(w http.ResponseWriter, r *http.Request, cfg *config.Config) 
 		_ = conn.Close()
 		return
 	}
-	claims, err := verifyPanelJWT(first.Args[0], cfg, false)
+	claims, keyRole, err := verifyPanelJWT(first.Args[0], cfg, false)
 	if err != nil {
 		wsSend(conn, "jwt error", err.Error())
 		_ = conn.Close()
 		return
+	}
+	// A token signed by a non-admin API key can only watch: strip every
+	// write permission so a stolen readonly key can't mint itself
+	// control.* powers over the console.
+	if keyRole != "" && keyRole != config.RoleAdmin {
+		kept := claims.Permissions[:0]
+		for _, p := range claims.Permissions {
+			if p == "websocket.connect" {
+				kept = append(kept, p)
+			}
+		}
+		claims.Permissions = kept
 	}
 	if !claims.hasScope("websocket") {
 		wsSend(conn, "jwt error", "jwt scope mismatch")
@@ -307,10 +319,10 @@ func handleLegacyWS(w http.ResponseWriter, r *http.Request, cfg *config.Config) 
 	defer sess.close()
 	defer terminals.removeIf(uuid, sess)
 
+	// Empty permission lists deny writes: only explicitly granted
+	// control.* (or admin wildcard) may act. Legacy tokens without a
+	// permissions claim can still watch the console, never drive it.
 	allow := func(perm string) bool {
-		if len(claims.Permissions) == 0 {
-			return true
-		}
 		for _, p := range claims.Permissions {
 			if p == perm || p == "admin.websocket.install" || p == "admin.websocket.transfer" {
 				return true

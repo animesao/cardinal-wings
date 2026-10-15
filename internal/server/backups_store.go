@@ -305,18 +305,11 @@ func handleBackupStoredRestore(w http.ResponseWriter, r *http.Request, ref, root
 // restoreFromURL fetches a remote archive (e.g. S3 presigned URL) and
 // extracts it into the data root without buffering the whole file.
 func restoreFromURL(r *http.Request, hostRoot, url string, clean bool) error {
-	dl, err := http.NewRequestWithContext(r.Context(), http.MethodGet, url, nil)
-	if err != nil {
-		return err
-	}
-	resp, err := http.DefaultClient.Do(dl)
+	resp, err := fetchGet(r.Context(), url)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("download status %d", resp.StatusCode)
-	}
 	return extractReaderToHost(hostRoot, io.LimitReader(resp.Body, 20<<30), clean)
 }
 

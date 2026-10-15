@@ -79,7 +79,9 @@ func TestJailSymlinkStoresVerbatim(t *testing.T) {
 	root := t.TempDir()
 	symlinkCapable(t, root)
 	fs := jailFS{root: root}
-	r := &sftp.Request{Method: "Symlink", Filepath: "rel-target", Target: "/alias"}
+	// Correct pkg/sftp semantics: Filepath = link to create,
+	// Target = link content. Only relative in-jail targets pass.
+	r := &sftp.Request{Method: "Symlink", Filepath: "/alias", Target: "rel-target"}
 	if err := fs.Filecmd(r); err != nil {
 		t.Fatalf("Filecmd symlink: %v", err)
 	}
@@ -89,6 +91,24 @@ func TestJailSymlinkStoresVerbatim(t *testing.T) {
 	}
 	if got != "rel-target" {
 		t.Fatalf("link content = %q, want verbatim rel-target", got)
+	}
+}
+
+func TestJailSymlinkRejectsEscape(t *testing.T) {
+	root := t.TempDir()
+	symlinkCapable(t, root)
+	fs := jailFS{root: root}
+	for _, tc := range []struct{ filepath, target string }{
+		{"/alias", "/etc/passwd"},
+		{"/alias", "../outside"},
+		{"/alias", "sub/../../outside"},
+		{"/alias", ""},
+		{"/", "rel-target"},
+	} {
+		r := &sftp.Request{Method: "Symlink", Filepath: tc.filepath, Target: tc.target}
+		if err := fs.Filecmd(r); err == nil {
+			t.Errorf("escaping symlink %+v accepted", tc)
+		}
 	}
 }
 

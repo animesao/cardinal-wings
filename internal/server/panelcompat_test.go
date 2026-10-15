@@ -39,9 +39,12 @@ func TestVerifyPanelJWTValid(t *testing.T) {
 		"exp":         time.Now().Add(10 * time.Minute).Unix(),
 		"nbf":         time.Now().Unix(),
 	})
-	claims, err := verifyPanelJWT(token, cfg, true)
+	claims, role, err := verifyPanelJWT(token, cfg, true)
 	if err != nil {
 		t.Fatalf("verify: %v", err)
+	}
+	if role != config.RoleAdmin {
+		t.Fatalf("role = %q, want admin", role)
 	}
 	if claims.ServerUUID != "srv-1" || !claims.hasScope("websocket") {
 		t.Fatalf("claims mismatch: %+v", claims)
@@ -58,7 +61,7 @@ func TestVerifyPanelJWTWrongKey(t *testing.T) {
 		"scope":       "websocket",
 		"exp":         time.Now().Add(10 * time.Minute).Unix(),
 	})
-	if _, err := verifyPanelJWT(token, cfg, true); err == nil {
+	if _, _, err := verifyPanelJWT(token, cfg, true); err == nil {
 		t.Fatal("expected signature mismatch error")
 	}
 }
@@ -71,7 +74,7 @@ func TestVerifyPanelJWTExpired(t *testing.T) {
 		"file_path":   "/server.properties",
 		"exp":         time.Now().Add(-time.Minute).Unix(),
 	})
-	if _, err := verifyPanelJWT(token, cfg, true); err == nil {
+	if _, _, err := verifyPanelJWT(token, cfg, true); err == nil {
 		t.Fatal("expected expiry error")
 	} else if !strings.Contains(err.Error(), "exp") {
 		t.Fatalf("unexpected error: %v", err)
@@ -81,9 +84,64 @@ func TestVerifyPanelJWTExpired(t *testing.T) {
 func TestVerifyPanelJWTMalformed(t *testing.T) {
 	cfg := testPanelConfig()
 	for _, tok := range []string{"", "a.b", "a.b.c.d", "not-a-jwt"} {
-		if _, err := verifyPanelJWT(tok, cfg, true); err == nil {
+		if _, _, err := verifyPanelJWT(tok, cfg, true); err == nil {
 			t.Fatalf("expected error for %q", tok)
 		}
+	}
+}
+
+func TestVerifyPanelJWTReadonlyRole(t *testing.T) {
+	cfg := testPanelConfig()
+	cfg.Keys = append(cfg.Keys, config.APIKey{Name: "ro", Key: "readonly-secret", Role: config.RoleReadOnly})
+	token := mintPanelJWT(t, "readonly-secret", map[string]interface{}{
+		"server_uuid": "srv-1",
+		"scope":       "websocket file-download",
+		"permissions": []string{"websocket.connect", "control.console"},
+		"exp":         time.Now().Add(10 * time.Minute).Unix(),
+	})
+	claims, role, err := verifyPanelJWT(token, cfg, true)
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if role != config.RoleReadOnly {
+		t.Fatalf("role = %q, want readonly", role)
+	}
+	if !claims.hasScope("websocket") {
+		t.Fatal("scope lost")
+	}
+}
+
+func TestVerifyPanelJWTRequiresExp(t *testing.T) {
+	cfg := testPanelConfig()
+	token := mintPanelJWT(t, "test-node-secret", map[string]interface{}{
+		"server_uuid": "srv-1",
+		"scope":       "websocket",
+	})
+	if _, _, err := verifyPanelJWT(token, cfg, true); err == nil {
+		t.Fatal("expected error for missing exp")
+	} else if !strings.Contains(err.Error(), "exp") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestVerifyPanelJWTRejectsLongTTL(t *testing.T) {
+	cfg := testPanelConfig()
+	token := mintPanelJWT(t, "test-node-secret", map[string]interface{}{
+		"server_uuid": "srv-1",
+		"scope":       "file-download",
+		"exp":         time.Now().Add(48 * time.Hour).Unix(),
+	})
+	if _, _, err := verifyPanelJWT(token, cfg, true); err == nil {
+		t.Fatal("expected error for excessive TTL")
+	}
+}
+
+func TestVerifyPanelJWTRejectsBadAlg(t *testing.T) {
+	cfg := testPanelConfig()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"typ":"JWT","alg":"none"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"server_uuid":"srv-1","scope":"websocket","exp":9999999999}`))
+	if _, _, err := verifyPanelJWT(header+"."+payload+".", cfg, true); err == nil {
+		t.Fatal("expected error for alg=none")
 	}
 }
 

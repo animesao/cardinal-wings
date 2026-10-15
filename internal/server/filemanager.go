@@ -294,7 +294,10 @@ func mountConfiguredVolumes(session *fmSession, volumes []volumeMount) error {
 			if volume.Source == "" {
 				return fmt.Errorf("NFS source is empty")
 			}
-			out, err := exec.Command("mount", "-t", "nfs", volume.Source, target).CombinedOutput()
+			// Harden the mount itself: no suid/dev from a remote fs, and
+			// soft+timeo so a dead NFS server fails instead of hanging
+			// the file-manager request forever.
+			out, err := exec.Command("mount", "-t", "nfs", "-o", "nosuid,nodev,soft,timeo=30", volume.Source, target).CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("mount NFS %q: %s: %w", volume.Source, strings.TrimSpace(string(out)), err)
 			}

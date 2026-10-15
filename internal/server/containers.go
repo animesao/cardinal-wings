@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -141,6 +142,47 @@ func paginate(list []runtime.Summary, q url.Values) pageResult {
 	return pageResult{items: list[offset:end], limit: limit, offset: offset}
 }
 
+// validateVolumeSource allows only cardinal named volumes on create:
+// host bind mounts ("/etc:/data") and remote filesystems ("host:/share")
+// would hand the container — and the file manager — arbitrary host paths,
+// so the wings API refuses them outright. Named volumes live inside
+// cardinal's own state directory and are created by cardinal itself.
+func validateVolumeSource(source string) error {
+	if source == "" {
+		return fmt.Errorf("volume source required")
+	}
+	for _, r := range source {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == '.' || r == '-' {
+			continue
+		}
+		return fmt.Errorf("volume source %q must be a named volume (no paths)", source)
+	}
+	if strings.HasPrefix(source, ".") || strings.HasPrefix(source, "-") {
+		return fmt.Errorf("volume source %q must be a named volume (no paths)", source)
+	}
+	return nil
+}
+
+// validContainerName keeps container names to the safe charset: they travel
+// into cardinal paths and state files, so separators and query fragments
+// must never pass through.
+func validContainerName(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '.' || c == '-' {
+			continue
+		}
+		return false
+	}
+	if name[0] == '.' || name[0] == '-' {
+		return false
+	}
+	return true
+}
+
 // splitRef returns the container id and trailing action from a ref path.
 func splitRef(path string) (ref, action string) {
 	trimmed := strings.TrimPrefix(path, "/v1/containers/")
@@ -157,7 +199,7 @@ func splitRef(path string) (ref, action string) {
 
 func isMutating(action, method string) bool {
 	switch action {
-	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/resize", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait", "reinstall", "pull", "transfer":
+	case "start", "stop", "restart", "kill", "remove", "exec", "exec/stream", "terminal", "terminal/input", "terminal/resize", "terminal/ws", "cp", "limits", "update", "rename", "commit", "ports/add", "ports/remove", "wait", "reinstall", "pull", "transfer", "export":
 		return true
 	case "sftp", "ports":
 		return method != http.MethodGet
@@ -195,6 +237,10 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+	if req.Name != "" && !validContainerName(req.Name) {
+		writeError(w, http.StatusBadRequest, "invalid container name (letters, digits, _, ., -)")
+		return
+	}
 
 	// Panel containers get a persistent data volume: a named cardinal volume
 	// keyed by container name. cardinal auto-creates named volumes inside its
@@ -206,6 +252,10 @@ func handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	for i := range req.Volumes {
 		if req.Volumes[i].Source == "" {
 			req.Volumes[i].Source = "srv-" + req.Name
+		}
+		if err := validateVolumeSource(req.Volumes[i].Source); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
 		}
 	}
 

@@ -609,8 +609,16 @@ paths:
   /v1/images/{ref}/push:
     post:
       tags: [images]
-      summary: Push an image (admin)
+      summary: Push an image (admin; credentials via JSON body preferred)
       parameters: [{ name: ref, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username: { type: string }
+                password: { type: string }
       responses: { "200": { description: pushed } }
   /v1/blueprints:
     get:
@@ -870,7 +878,7 @@ paths:
   /v1/containers/{id}/export:
     get:
       tags: [containers]
-      summary: Export the container filesystem as tar
+      summary: Export the container filesystem as tar (admin)
       parameters: [{ name: id, in: path, required: true, schema: { type: string } }]
       responses: { "200": { description: tar archive } }
   /v1/containers/{id}/commit:

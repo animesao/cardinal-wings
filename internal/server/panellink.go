@@ -48,6 +48,12 @@ func panelLinkFromPush(cfg map[string]interface{}) *panelLink {
 	if url == "" {
 		return nil
 	}
+	// Never persist a link that points nowhere valid: a pushed attacker
+	// URL would divert SFTP credential checks and backup callbacks.
+	if err := validatePanelURL(url); err != nil {
+		logf("panel config push: ignoring invalid panel_url: %v", err)
+		return nil
+	}
 	link := &panelLink{
 		URL:     url,
 		TokenID: str(cfg, "daemon_token_id", "token_id", "tokenID"),

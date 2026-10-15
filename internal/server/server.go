@@ -121,6 +121,7 @@ func Run(cfg *config.Config) error {
 	handler = mw.Authenticate(handler)
 	handler = mw.RateLimitKey(handler)
 	handler = mw.RateLimit(handler)
+	handler = bodyLimitMiddleware(handler)
 	handler = mw.CORS(handler)
 
 	// Everything else falls through to the authenticated API.

@@ -17,6 +17,8 @@ sftp_host = "0.0.0.0"    # bind SFTP on all interfaces so clients can reach it
 sftp_port = 2022
 
 # Panel credentials. role is "readonly" or "admin".
+# Generate a real secret (min 12 chars): external binds refuse to start with
+# placeholder values like the one below.
 [[keys]]
 name = "main"
 key = "change-me"

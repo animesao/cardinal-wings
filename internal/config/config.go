@@ -378,8 +378,31 @@ func (c *Config) Validate() error {
 		if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 			return fmt.Errorf("TLS requires both tls_cert and tls_key")
 		}
+		// Bearer tokens, panel SFTP passwords and JWTs all travel over
+		// this listener: an externally reachable plain-HTTP API leaks
+		// every credential on first use. Bind loopback or terminate TLS.
+		if c.Server.TLSCert == "" {
+			return fmt.Errorf("refusing to expose on %s without TLS (set tls_cert/tls_key, or bind 127.0.0.1)", c.Server.Host)
+		}
+		for _, k := range c.Keys {
+			if isPlaceholderKey(k.Key) {
+				return fmt.Errorf("key %q uses a well-known placeholder value — generate a real one", k.Name)
+			}
+			if len(k.Key) < 12 {
+				return fmt.Errorf("key %q is too short (min 12 characters) for an exposed listener", k.Name)
+			}
+		}
 	}
 	return nil
+}
+
+// isPlaceholderKey rejects the example values operators copy-paste.
+func isPlaceholderKey(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "change-me", "changeme", "secret", "password", "admin", "token", "key", "test", "123456", "password123":
+		return true
+	}
+	return false
 }
 
 func isExternal(host string) bool {

@@ -101,7 +101,7 @@ func (c *Client) Remove(ctx context.Context, id string, force bool) error {
 
 // Rename renames a container.
 func (c *Client) Rename(ctx context.Context, id, newName string) error {
-	return c.do(ctx, "POST", "/containers/"+id+"/rename?name="+newName, nil, nil)
+	return c.do(ctx, "POST", "/containers/"+id+"/rename?name="+url.QueryEscape(newName), nil, nil)
 }
 
 // Logs returns up to tail lines of a container log. cardinal ignores follow,

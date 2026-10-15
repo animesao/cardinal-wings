@@ -351,11 +351,34 @@ func (fs jailFS) Filecmd(r *sftp.Request) error {
 		}
 		return os.Rename(p, dst)
 	case "Symlink":
-		dst, err := fs.resolveAllowMissing(r.Target, true)
+		// pkg/sftp semantics: Filepath = link to create, Target = link
+		// content. The old code had them swapped (created a link AT the
+		// resolved target pointing at the RAW client path). Only relative
+		// targets that resolve inside the jail are allowed. The leading-"/"
+		// check is explicit (not filepath.IsAbs) so it holds on every OS.
+		if r.Target == "" || strings.HasPrefix(filepath.ToSlash(r.Target), "/") {
+			return os.ErrPermission
+		}
+		for _, part := range strings.Split(filepath.ToSlash(r.Target), "/") {
+			if part == ".." {
+				return os.ErrPermission
+			}
+		}
+		linkPath, err := fs.resolveAllowMissing(r.Filepath, true)
 		if err != nil {
 			return err
 		}
-		return os.Symlink(r.Filepath, dst)
+		// The link itself must be strictly inside the jail: a link AT the
+		// root would replace the data directory itself.
+		if rel, err := filepath.Rel(fs.root, linkPath); err != nil || rel == "." {
+			return os.ErrPermission
+		}
+		resolved := filepath.ToSlash(filepath.Join(filepath.Dir(path.Clean("/"+r.Filepath)), r.Target))
+		if _, err := fs.resolveAllowMissing(resolved, true); err != nil {
+			return err
+		}
+		_ = os.Remove(linkPath)
+		return os.Symlink(r.Target, linkPath)
 	case "Truncate":
 		attrs := r.Attributes()
 		return os.Truncate(p, int64(attrs.Size))

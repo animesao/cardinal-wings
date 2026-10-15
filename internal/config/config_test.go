@@ -128,6 +128,39 @@ func TestValidateRejectsPartialTLS(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsExternalPlainHTTP(t *testing.T) {
+	cfg := Default()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Keys = []APIKey{{Name: "k", Key: "a-strong-random-key-123", Role: RoleAdmin}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected error for external bind without TLS")
+	}
+}
+
+func TestValidateAcceptsExternalWithTLS(t *testing.T) {
+	cfg := Default()
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Keys = []APIKey{{Name: "k", Key: "a-strong-random-key-123", Role: RoleAdmin}}
+	cfg.Server.TLSCert = "/c.pem"
+	cfg.Server.TLSKey = "/k.pem"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid external TLS config rejected: %v", err)
+	}
+}
+
+func TestValidateRejectsPlaceholderAndShortKeys(t *testing.T) {
+	for _, key := range []string{"change-me", "changeme", "secret", "short"} {
+		cfg := Default()
+		cfg.Server.Host = "0.0.0.0"
+		cfg.Keys = []APIKey{{Name: "k", Key: key, Role: RoleAdmin}}
+		cfg.Server.TLSCert = "/c.pem"
+		cfg.Server.TLSKey = "/k.pem"
+		if err := cfg.Validate(); err == nil {
+			t.Fatalf("expected error for weak key %q", key)
+		}
+	}
+}
+
 func TestAuthorizeConstantTimeLookup(t *testing.T) {
 	cfg := Default()
 	cfg.Keys = []APIKey{

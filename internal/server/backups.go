@@ -2,14 +2,13 @@ package server
 
 // backups.go streams container data as a tar.gz archive. Unlike the file
 // manager (per-file base64 over JSON) backups move whole directory trees as
-// one raw binary stream: `tar czf - -C <data-root> .` runs inside the
-// container through `cardinal exec` and wings pipes it straight to the HTTP
-// response. Restore is the reverse: the uploaded archive is piped into
-// `tar xzf - -C <data-root>`, optionally after wiping the data root
-// (?clean=1) so the restore is exact, not a merge.
+// one raw binary stream created with host tar (`tar czf - -C <data-root> .`).
+// Restore is the reverse through the jail-checked pure-Go extractor in
+// archive.go (no host tar, no ".." escapes, no device nodes, capped output),
+// optionally after wiping the data root (?clean=1) so the restore is exact,
+// not a merge.
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -213,9 +212,10 @@ func restoreBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 	writeJSON(w, http.StatusOK, map[string]string{"restored": ref, "clean": fmt.Sprintf("%t", clean)})
 }
 
-// extractReaderToHost extracts a tar.gz stream into hostRoot with host tar.
-// With clean=true the root is emptied first (exact restore). Shared by the
-// upload-restore path and stored/remote restores (backups_store.go).
+// extractReaderToHost extracts a tar.gz stream into hostRoot with a pure-Go
+// jail-checked extractor (no host tar, no ".." escapes, no device nodes,
+// capped output). With clean=true the root is emptied first (exact restore).
+// Shared by the upload-restore path and stored/remote restores.
 func extractReaderToHost(hostRoot string, src io.Reader, clean bool) error {
 	if hostRoot == "/" || filepath.Clean(hostRoot) == "/" {
 		return fmt.Errorf("invalid restore root")
@@ -231,13 +231,8 @@ func extractReaderToHost(hostRoot string, src io.Reader, clean bool) error {
 			}
 		}
 	}
-
-	cmd := exec.Command("tar", "xzf", "-", "-C", hostRoot, "--no-absolute-names", "--no-same-owner")
-	cmd.Stdin = src
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("host tar failed: %v %s", err, strings.TrimSpace(stderr.String()))
+	if err := extractTarGz(hostRoot, src); err != nil {
+		return fmt.Errorf("restore: %w", err)
 	}
 	return nil
 }
