@@ -635,26 +635,27 @@ func handleSSHSession(ch ssh.Channel, reqs <-chan *ssh.Request, containerID stri
 			_ = req.Reply(true, nil)
 		}
 
-		// Preferred path: mount the stopped container's data in place (the
-		// file manager's mechanism) and share the mount with any other SFTP
-		// session. The container stays off.
-		root, release, err := sftpLeaseInst.acquire(containerID)
-		if err != nil {
+		// Preferred path: resolve through the shared mount lease, which mounts
+		// whatever is missing (overlay, disk image, volumes) and shares the
+		// mount with concurrent sessions. The container stays off. Existence
+		// alone is not trusted: an unmounted leftover dir would serve the
+		// image skeleton instead of the data.
+		release, root := ensureDataRoot(containerID)
+		if root == "" {
 			// Fallback: data not mountable (e.g. the image rootfs is missing
 			// after a fresh node install) — start the container for the
 			// session, as before, so SFTP still works.
-			logf("sftp: mount %s failed, trying temporary start: %v", containerID, err)
+			logf("sftp: mount %s failed, trying temporary start", containerID)
 			var started bool
+			var err error
 			root, started, err = sftpRootViaStart(containerID)
 			if err != nil {
 				_, _ = io.WriteString(ch, "sftp: container data unavailable\r\n")
 				return
 			}
-			release = nil
+			release = func() {}
 			if started {
-				defer func() {
-					tryStopContainer(containerID)
-				}()
+				release = func() { tryStopContainer(containerID) }
 			}
 		}
 
