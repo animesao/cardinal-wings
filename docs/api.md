@@ -526,9 +526,10 @@ curl -X DELETE -H "Authorization: Bearer KEY" localhost:8080/v1/cluster/replicas
 
 ```toml
 [server]
-host = "127.0.0.1"   # loopback default; external binds REQUIRE tls_cert/tls_key
-port = 8080          # (refused at startup otherwise) + strong keys (min 12 chars,
-                     # no placeholders like "change-me")
+host = "127.0.0.1"   # loopback default; external binds without tls_cert/tls_key
+port = 8080          # start with a loud cleartext warning — use TLS, loopback
+                     # or a VPN. Keys must be strong (min 12 chars, no
+                     # placeholders like "change-me") or startup refuses.
 
 [[keys]]
 name = "main"

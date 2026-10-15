@@ -42,6 +42,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cardinal-wings: invalid config: %v\n", err)
 		os.Exit(1)
 	}
+	if cfg.ExternalPlainHTTP() {
+		fmt.Fprintf(os.Stderr, "cardinal-wings: WARNING: listening on %s without TLS — Bearer tokens, SFTP passwords and JWTs travel in cleartext. Set tls_cert/tls_key, bind 127.0.0.1, or keep the node behind a VPN.\n", cfg.Server.Host)
+	}
 
 	if err := server.Run(cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "cardinal-wings: %v\n", err)

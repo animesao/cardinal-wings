@@ -378,12 +378,6 @@ func (c *Config) Validate() error {
 		if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
 			return fmt.Errorf("TLS requires both tls_cert and tls_key")
 		}
-		// Bearer tokens, panel SFTP passwords and JWTs all travel over
-		// this listener: an externally reachable plain-HTTP API leaks
-		// every credential on first use. Bind loopback or terminate TLS.
-		if c.Server.TLSCert == "" {
-			return fmt.Errorf("refusing to expose on %s without TLS (set tls_cert/tls_key, or bind 127.0.0.1)", c.Server.Host)
-		}
 		for _, k := range c.Keys {
 			if isPlaceholderKey(k.Key) {
 				return fmt.Errorf("key %q uses a well-known placeholder value — generate a real one", k.Name)
@@ -394,6 +388,15 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// ExternalPlainHTTP reports an externally reachable listener without TLS.
+// This is only a warning, not a refusal: the installer itself provisions
+// plain-HTTP nodes (panel links over LAN/VPN are legitimate), but every
+// Bearer token and password then travels in cleartext, so the operator
+// must have made that choice knowingly.
+func (c *Config) ExternalPlainHTTP() bool {
+	return isExternal(c.Server.Host) && c.Server.TLSCert == ""
 }
 
 // isPlaceholderKey rejects the example values operators copy-paste.

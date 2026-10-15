@@ -190,8 +190,9 @@ Error shape (all endpoints): `{"error": {"code": "…", "message": "…"}}`.
   `/etc/cardinal-wings/config.toml`.
 - **Auth:** `Authorization: Bearer <key>`, constant-time comparison.
 - **Rate limit:** per-IP token bucket (like `cardinal serve`), loopback exempt.
-- **Bind:** loopback `127.0.0.1` by default; external bind requires a key and
-  TLS (both `--tls-cert` and `--tls-key`).
+- **Bind:** loopback `127.0.0.1` by default; an external bind requires real
+  keys (no placeholders, min 12 chars) and logs a loud cleartext warning
+  unless TLS (`tls_cert` + `tls_key`) is configured.
 - **Timeouts:** read/write/idle and max header bytes configured.
 - **Remote-node creds** (for cluster) live in the same config.toml, never
   echoed back over the API.

@@ -128,12 +128,22 @@ func TestValidateRejectsPartialTLS(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsExternalPlainHTTP(t *testing.T) {
+func TestValidateAllowsExternalPlainHTTPWithWarning(t *testing.T) {
+	// Plain HTTP on an external bind is the installer's default: it must
+	// start (with a loud stderr warning via ExternalPlainHTTP), not refuse.
 	cfg := Default()
 	cfg.Server.Host = "0.0.0.0"
 	cfg.Keys = []APIKey{{Name: "k", Key: "a-strong-random-key-123", Role: RoleAdmin}}
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("expected error for external bind without TLS")
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("valid external plain-HTTP config rejected: %v", err)
+	}
+	if !cfg.ExternalPlainHTTP() {
+		t.Fatal("ExternalPlainHTTP = false, want true")
+	}
+	cfg.Server.TLSCert = "/c.pem"
+	cfg.Server.TLSKey = "/k.pem"
+	if cfg.ExternalPlainHTTP() {
+		t.Fatal("ExternalPlainHTTP = true with TLS configured, want false")
 	}
 }
 
