@@ -5,6 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -178,5 +181,56 @@ func TestIsMutatingBackupDelete(t *testing.T) {
 	}
 	if isMutating("backup", "GET") {
 		t.Fatal("GET backup must stay readable")
+	}
+}
+
+func TestBrowserUploadRejectsReadonlyJWT(t *testing.T) {
+	cfg := testPanelConfig()
+	cfg.Keys = append(cfg.Keys, config.APIKey{Name: "ro", Key: "readonly-secret", Role: config.RoleReadOnly})
+	token := mintPanelJWT(t, "readonly-secret", map[string]interface{}{
+		"server_uuid": "srv-1",
+		"scope":       "file-upload",
+		"exp":         time.Now().Add(10 * time.Minute).Unix(),
+	})
+	var body strings.Builder
+	w := multipart.NewWriter(&body)
+	fw, err := w.CreateFormFile("files", "evil.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fw.Write([]byte("evil"))
+	_ = w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/upload/file?token="+token, strings.NewReader(body.String()))
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	handleBrowserUpload(rec, req, cfg)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("readonly-signed upload JWT: status = %d, want 403", rec.Code)
+	}
+}
+
+func TestBrowserUploadAllowsAdminJWT(t *testing.T) {
+	cfg := testPanelConfig()
+	token := mintPanelJWT(t, "test-node-secret", map[string]interface{}{
+		"server_uuid": "srv-1",
+		"scope":       "file-upload",
+		"exp":         time.Now().Add(10 * time.Minute).Unix(),
+	})
+	var body strings.Builder
+	w := multipart.NewWriter(&body)
+	fw, err := w.CreateFormFile("files", "a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = fw.Write([]byte("a"))
+	_ = w.Close()
+	req := httptest.NewRequest(http.MethodPost, "/upload/file?token="+token, strings.NewReader(body.String()))
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	rec := httptest.NewRecorder()
+	handleBrowserUpload(rec, req, cfg)
+	// No container exists in tests: must fail upstream (502), never 403.
+	// This pins that admin-signed uploads are not blocked by the role gate.
+	if rec.Code == http.StatusForbidden {
+		t.Fatal("admin-signed upload JWT must not be rejected by the role gate")
 	}
 }

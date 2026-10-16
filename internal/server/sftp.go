@@ -497,10 +497,12 @@ func startSFTPServer(cfg *config.Config) error {
 
 	sshCfg := &ssh.ServerConfig{
 		PasswordCallback: func(conn ssh.ConnMetadata, pass []byte) (*ssh.Permissions, error) {
+			// One generic message for unknown users and wrong passwords alike:
+			// distinct errors would enumerate valid usernames.
 			// 1. Panel-assigned per-container credentials (PUT /v1/.../sftp).
 			if entry, ok := store.entryByUsername(conn.User()); ok {
 				if bcrypt.CompareHashAndPassword([]byte(entry.PasswordHash), pass) != nil {
-					return nil, errors.New("invalid password")
+					return nil, errors.New("invalid sftp credentials")
 				}
 				return &ssh.Permissions{Extensions: map[string]string{"container-id": entry.ContainerID}}, nil
 			}
@@ -511,7 +513,7 @@ func startSFTPServer(cfg *config.Config) error {
 					return &ssh.Permissions{Extensions: map[string]string{"container-id": serverUUID}}, nil
 				}
 			}
-			return nil, errors.New("unknown sftp user")
+			return nil, errors.New("invalid sftp credentials")
 		},
 		PublicKeyCallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			if link, ok := effectivePanelLink(cfg); ok {
@@ -522,7 +524,7 @@ func startSFTPServer(cfg *config.Config) error {
 					return &ssh.Permissions{Extensions: map[string]string{"container-id": serverUUID}}, nil
 				}
 			}
-			return nil, errors.New("unknown sftp key")
+			return nil, errors.New("invalid sftp credentials")
 		},
 		MaxAuthTries: 6,
 	}

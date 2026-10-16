@@ -298,9 +298,10 @@ The panel signs short-lived JWTs (HMAC-SHA256 with the node daemon token,
 which is a wings API key) for direct browser↔daemon traffic. Wings verifies
 them against its configured keys — the React client works unchanged.
 Token rules: `alg` must be HS256, `exp` is required (max TTL 24h; the panel
-uses 5–10 min), and a token signed by a readonly key is read-only on the
-console (control.* permissions are stripped — only `websocket.connect`
-survives).
+uses 5–10 min), and a token signed by a readonly key is read-only:
+on the console control.* permissions are stripped (only `websocket.connect`
+survives), and `POST /upload/file` rejects readonly-signed tokens outright
+(403) — uploads mutate the container.
 
 ```text
 GET  /download/file?token=…        scope file-download (claims server_uuid + file_path)

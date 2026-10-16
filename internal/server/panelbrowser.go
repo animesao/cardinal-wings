@@ -140,9 +140,16 @@ func handleBrowserDownload(w http.ResponseWriter, r *http.Request, cfg *config.C
 // handleBrowserUpload verifies the file-upload JWT and stores multipart
 // files into ?directory= (default /).
 func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
-	claims, _, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
+	claims, keyRole, err := verifyPanelJWT(r.URL.Query().Get("token"), cfg, true)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	// Uploads mutate the container: a readonly-signed token must never
+	// drive writes (same watch-vs-drive rule as the legacy websocket,
+	// which downgrades non-admin keys to watch-only).
+	if keyRole != config.RoleAdmin {
+		writeError(w, http.StatusForbidden, "jwt role mismatch")
 		return
 	}
 	if !claims.hasScope("file-upload") {
