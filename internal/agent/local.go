@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -39,6 +40,11 @@ func StartLocal() (*Local, error) {
 	}
 	host := "127.0.0.1"
 	cmd := exec.Command("cardinal", "serve", "-H", host, "-p", fmt.Sprintf("%d", port), "--token", tok, "-d")
+	// Belt and braces: the CLI flag is the primary channel, but the daemon
+	// re-exec reads the env as fallback. If a future cardinal refactor
+	// drops the flag on the floor again (as the cobra remote-flag stripping
+	// once did), the token still arrives and serve refuses nothing.
+	cmd.Env = append(os.Environ(), "CARDINAL_TOKEN="+tok)
 	l := &Local{host: host, port: port, token: tok, cmd: cmd}
 	client := runtime.NewClient(fmt.Sprintf("http://%s:%d", host, port), tok)
 	l.client = client
