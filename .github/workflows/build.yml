@@ -138,6 +138,10 @@ jobs:
     needs: [build]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history + tags: the release-notes step diffs against the
+          # previous tag (shallow checkouts have neither).
+          fetch-depth: 0
 
       - name: Download all release artefacts
         uses: actions/download-artifact@v4
@@ -148,13 +152,39 @@ jobs:
       - name: Inspect artefacts
         run: ls -la artifacts/
 
+      - name: Build release notes
+        id: notes
+        run: |
+          CUR="${{ github.ref_name }}"
+          # Previous release tag by creation date.
+          PREV=$(git tag --sort=-creatordate | grep -v "^${CUR}$" | head -1)
+          if [ -z "$PREV" ]; then
+            RANGE="$CUR"
+            TITLE="Initial release"
+          else
+            RANGE="$PREV..$CUR"
+            TITLE="Changes since $PREV (last 10 commits)"
+          fi
+          {
+            echo "## $TITLE"
+            echo ""
+            git log --pretty=format:'- %h %s' "$RANGE" | head -10
+            echo ""
+            echo ""
+            cat .github/release-body.md
+            if [ -n "$PREV" ]; then
+              echo ""
+              echo "Full Changelog: $PREV...$CUR"
+            fi
+          } > /tmp/release-body.md
+          cat /tmp/release-body.md
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           name: cardinal-wings ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
-          body_path: .github/release-body.md
-          generate_release_notes: true
+          body_path: /tmp/release-body.md
           files: artifacts/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
