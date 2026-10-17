@@ -151,9 +151,18 @@ func mountOverlaySession(id string) (*fmSession, error) {
 		}
 		out, err := exec.Command("mount", "-o", "loop", diskImage, data).CombinedOutput()
 		if err != nil {
-			return closeWithError(fmt.Errorf("mount persistent data: %s: %w", strings.TrimSpace(string(out)), err))
+			// Hosts without loop devices (LXC/OpenVZ-style VDS) cannot mount the
+			// quota image. Cardinal starts such containers without a disk limit,
+			// so their upper/work directories stay in the plain overlay paths —
+			// keep serving files from there instead of failing every request.
+			if !loopDevicesAvailable() {
+				logf("fm: %s: cannot mount disk image %s (no loop devices); using the unquota'd overlay: %s", id, diskImage, strings.TrimSpace(string(out)))
+			} else {
+				return closeWithError(fmt.Errorf("mount persistent data: %s: %w", strings.TrimSpace(string(out)), err))
+			}
+		} else {
+			session.temporaryData = true
 		}
-		session.temporaryData = true
 	}
 
 	if !isMounted(merged) {
