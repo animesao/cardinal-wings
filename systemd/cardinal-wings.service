@@ -12,6 +12,10 @@ RestartSec=5s
 # The daemon needs to reach cardinal's data dir; set User=cardinal if needed.
 # User=cardinal
 Environment=CARDINAL_DATA_DIR=/root/.cardinal
+# Реестровая политика: cardinal принимает pull только из allowlist (дефолт —
+# Docker Hub, ghcr.io, quay.io, gcr.io). Флаг наследуется запускаемым из
+# wings процессом cardinal serve. Свой реестр: cardinal registry allowlist add.
+Environment=CARDINAL_REGISTRY_STRICT=1
 StandardOutput=journal
 StandardError=journal
 

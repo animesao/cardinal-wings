@@ -282,6 +282,13 @@ ExecStart=${BIN_DIR}/cardinal-wings --config ${CONF_DIR}/config.toml
 Restart=on-failure
 RestartSec=5s
 Environment=CARDINAL_DATA_DIR=/root/.cardinal
+# Реестровая политика. Флаг живёт в окружении wings, которое наследует
+# запускаемый им cardinal serve (internal/agent/local.go: cmd.Env =
+# append(os.Environ(), ...)). Со STRICT=1 cardinal принимает pull только из
+# allowlist; встроенный дефолт — Docker Hub, ghcr.io, quay.io, gcr.io,
+# поэтому обычные образы продолжают работать. Свой реестр добавляется
+# командой: cardinal registry allowlist add <host>.
+Environment=CARDINAL_REGISTRY_STRICT=${CARDINAL_REGISTRY_STRICT:-1}
 StandardOutput=journal
 StandardError=journal
 
