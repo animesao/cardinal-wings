@@ -48,6 +48,12 @@ bash -n install.sh  # installer syntax
   `{"error":{"code":"…","message":"…"}}`.
 - **Node-aware**: resource endpoints must accept `?node=<name>`.
 - Keep the OpenAPI schema (`docs/openapi.yaml`) in sync when adding endpoints.
+- Before tagging a release, set `info.version` in `docs/openapi.yaml` to that
+  release's version (without the leading `v`). The `openapi-version` CI job
+  fails the build on a tag push when the two disagree, so a stale spec cannot
+  reach a release. `redocly lint` only validates structure, not this value.
+- The running build reports its own version at `GET /v1/version`; prefer that
+  over the spec's `info.version` when they disagree.
 
 ## Licensing
 

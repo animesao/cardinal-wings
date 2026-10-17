@@ -36,6 +36,36 @@ permissions:
   contents: write   # release: write tag + assets
 
 jobs:
+  openapi-version:
+    name: openapi version matches the tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: a released tag must match docs/openapi.yaml info.version
+        # info.version sat at "0.2.0-dev" while the project was on 0.5.x, so
+        # anyone generating a panel client from this document read a version
+        # that never existed. redocly lint only checks structure, so nothing
+        # caught it. No-op on branch and PR pushes.
+        run: |
+          set -eu
+          case "$GITHUB_REF_NAME" in
+            v*) tag="${GITHUB_REF_NAME#v}" ;;
+            *)
+              echo "not a tag push ($GITHUB_REF_NAME) - nothing to compare"
+              exit 0
+              ;;
+          esac
+          spec=$(sed -n 's/^  version: *"\{0,1\}\([^"]*\)"\{0,1\} *$/\1/p' docs/openapi.yaml | head -n1)
+          echo "tag=$tag  openapi info.version=$spec"
+          if [ "$tag" != "$spec" ]; then
+            echo "::error file=docs/openapi.yaml::info.version $spec does not match tag $tag."
+            echo "Update docs/openapi.yaml info.version before tagging."
+            exit 1
+          fi
+          echo "openapi info.version matches tag"
+
   lint:
     name: gofmt / go vet / govulncheck
     runs-on: ubuntu-latest
@@ -89,7 +119,7 @@ jobs:
     name: build (${{ matrix.goos }}/${{ matrix.goarch }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [lint, test]
+    needs: [lint, test, openapi-version]
     strategy:
       fail-fast: false
       matrix:
