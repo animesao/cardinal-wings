@@ -40,10 +40,10 @@ jobs:
           repository: animesao/cardinal
           path: cardinal-src
 
-      - name: setup-go (1.26.6)
+      - name: setup-go (1.26.9)
         uses: actions/setup-go@v5
         with:
-          go-version: "1.26.6"
+          go-version: "1.26.9"
           cache: true
 
       - name: build cardinal
