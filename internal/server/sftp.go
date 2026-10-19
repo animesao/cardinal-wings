@@ -239,6 +239,12 @@ func cardinalDataDir() string {
 // first (see resolve.go) so panel-stable names work here too.
 func containerDataRoot(containerID string) (string, bool, error) {
 	containerID = resolveLocalID(containerID)
+	// Тот же валидатор, что и в file-manager: id контейнера не должен
+	// содержать разделителей пути, иначе «../..» уводил путь на уровень
+	// выше overlay/.
+	if !validContainerID(containerID) {
+		return "", false, fmt.Errorf("invalid container id")
+	}
 	merged := filepath.Join(cardinalDataDir(), "overlay", containerID, "merged")
 	if _, err := os.Stat(merged); err != nil {
 		return "", false, fmt.Errorf("container data not available: %w", err)
@@ -340,9 +346,12 @@ func (fs jailFS) Filecmd(r *sftp.Request) error {
 	switch r.Method {
 	case "Mkdir":
 		return os.Mkdir(p, 0755)
-	case "Rmdir":
-		return os.Remove(p)
-	case "Remove":
+	case "Rmdir", "Remove":
+		// Корень jail'а удалять нельзя: Rmdir("/") раньше сносил сам
+		// каталог сервера (os.Remove на путь jail-корня).
+		if filepath.Clean(p) == filepath.Clean(fs.root) {
+			return os.ErrPermission
+		}
 		return os.Remove(p)
 	case "Rename":
 		dst, err := fs.resolveAllowMissing(r.Target, true)
