@@ -5,6 +5,7 @@ package config
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"crypto/subtle"
 	"fmt"
 	"os"
@@ -417,9 +418,16 @@ func isExternal(host string) bool {
 }
 
 // Authorize returns the role for the given bearer key, or false if unknown.
+//
+// Сравнение идёт по SHA-256 от токена и ключа: subtle.ConstantTimeCompare
+// возвращает 0 немедленно при разной длине, то есть по времени ответа
+// определялась длина ключа. Хэши всегда одной длины, поэтому сравнение
+// остаётся постоянным по времени.
 func (c *Config) Authorize(bearer string) (Role, bool) {
+	h := sha256.Sum256([]byte(bearer))
 	for _, k := range c.Keys {
-		if subtle.ConstantTimeCompare([]byte(bearer), []byte(k.Key)) == 1 {
+		kh := sha256.Sum256([]byte(k.Key))
+		if subtle.ConstantTimeCompare(h[:], kh[:]) == 1 {
 			return k.Role, true
 		}
 	}
@@ -432,8 +440,10 @@ func (r Role) AdminOnly() bool { return r == RoleAdmin }
 // KeyName returns the name of the API key matching the bearer token, or false
 // if the token is not a configured key.
 func (c *Config) KeyName(bearer string) (string, bool) {
+	h := sha256.Sum256([]byte(bearer))
 	for _, k := range c.Keys {
-		if subtle.ConstantTimeCompare([]byte(bearer), []byte(k.Key)) == 1 {
+		kh := sha256.Sum256([]byte(k.Key))
+		if subtle.ConstantTimeCompare(h[:], kh[:]) == 1 {
 			return k.Name, true
 		}
 	}
