@@ -1,0 +1,19 @@
+# gitleaks config for cardinal-wings - allow documented example placeholders.
+title = "cardinal-wings gitleaks"
+
+[extend]
+  # Use gitleaks' built-in rules on top of our allowlist.
+  useDefault = true
+
+[allowlist]
+  description = "Allow documented placeholders in docs and examples"
+  paths = [
+    '''(?i)docs/.*\.md$''',
+    '''(?i)README\.md$''',
+    '''(?i)SECURITY\.md$''',
+  ]
+  regexes = [
+    # The curl examples in the docs carry a placeholder, not a key:
+    # "Authorization: Bearer KEY", "panel-admin-key", "<token>".
+    '''(?i)^(key|panel-admin-key|<[^>]+>|\$\{[^}]+\})$''',
+  ]
