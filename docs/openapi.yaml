@@ -10,7 +10,7 @@ info:
     `info.version` tracks the wings release this document ships with. The
     build actually running is reported by `GET /v1/version` at runtime - trust
     that over this field, since a binary can be newer than the spec beside it.
-  version: "0.5.16"
+  version: "0.5.17"
 servers:
   - url: http://127.0.0.1:8080
 security:
