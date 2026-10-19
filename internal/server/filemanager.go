@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -444,7 +445,12 @@ func pathArg(r *http.Request, body map[string]interface{}, name string) (string,
 
 func decodeBody(r *http.Request) map[string]interface{} {
 	body := map[string]interface{}{}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	// Ограничиваем чтение тела: раньше json.Decoder читал его целиком в
+	// память, и маршрут fm/upload-zip был исключён из общего лимита тела
+	// запроса — 20 ГБ запроса давали ~35 ГБ RSS (тело + base64-буфер) и
+	// убивали wings вместе со всеми контейнерами.
+	limited := io.LimitReader(r.Body, bodyCapFor(r)+1)
+	_ = json.NewDecoder(limited).Decode(&body)
 	return body
 }
 

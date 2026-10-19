@@ -91,7 +91,15 @@ func (nr *nodeRegistry) names() []string {
 func clientFor(w http.ResponseWriter, r *http.Request) (*runtime.Client, bool) {
 	name := r.URL.Query().Get("node")
 	if name == "" {
-		return registry.local(), true
+		c := registry.local()
+		if c == nil {
+			// Локальный cardinal не запущен: раньше здесь возвращался nil,
+			// и следующий вызов c.Inspect разыменовывал nil-указатель —
+			// паника без recover'а роняла соединение.
+			writeErr(w, http.StatusServiceUnavailable, ErrUpstream, "local node runtime unavailable")
+			return nil, false
+		}
+		return c, true
 	}
 	c := registry.byName(name)
 	if c == nil {

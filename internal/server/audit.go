@@ -84,12 +84,22 @@ func (a *auditLog) record(keyName, method, path, remote, role string) {
 	a.maybeRotateLocked()
 }
 
-// auditMiddleware wraps the authenticated mux and records mutating requests.
+// auditMiddleware wraps a mux and records mutating requests.
+//
+// Раньше middleware оборачивал только аутентифицированный mux, поэтому
+// публичные браузерные маршруты (POST /upload/file — запись файлов в
+// контейнер, legacy console websocket) в журнал аудита НЕ попадали:
+// запись в файловую систему контейнера оставалась незамеченной.
 func auditMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost || r.Method == http.MethodDelete || r.Method == http.MethodPut || r.Method == http.MethodPatch {
 			name, _ := auth.KeyNameFrom(r.Context())
 			role, _ := auth.RoleFrom(r.Context())
+			if name == "" {
+				// Публичный маршрут с собственной JWT-аутентификацией:
+				// ключа в контексте нет, но событие всё равно важно.
+				name = "public"
+			}
 			audit.record(name, r.Method, r.URL.Path, r.RemoteAddr, string(role))
 		}
 		next.ServeHTTP(w, r)
