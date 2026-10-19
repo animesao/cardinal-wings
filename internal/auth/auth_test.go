@@ -59,14 +59,34 @@ func TestAuthenticateValidToken(t *testing.T) {
 
 func TestAuthenticateQueryToken(t *testing.T) {
 	// Browser WebSockets can't set the Authorization header, so the panel sends
-	// the API key as ?token= on the console WS URL. It must authenticate.
+	// the API key as ?token= on the console WS URL. It must authenticate —
+	// но ТОЛЬКО на WebSocket-upgrade (см. TestAuthenticateQueryTokenPlain).
 	mw := newMiddleware()
 	handler := mw.Authenticate(mw.RateLimit(http.HandlerFunc(okHandler)))
 	req := httptest.NewRequest("GET", "http://example.test/v1/containers/x/terminal/ws?token="+secret, nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("query token should authenticate, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("query token should authenticate on websocket upgrade, got %d (%s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthenticateQueryTokenPlain — ?token= принимается ТОЛЬКО на
+// WebSocket-upgrade.
+//
+// Раньше bearer из query-строки принимался на любом маршруте, где нет
+// заголовка Authorization: токен ноды оседал в access-логах обратного
+// прокси, в истории браузера и в заголовке Referer.
+func TestAuthenticateQueryTokenPlain(t *testing.T) {
+	mw := newMiddleware()
+	handler := mw.Authenticate(mw.RateLimit(http.HandlerFunc(okHandler)))
+	req := httptest.NewRequest("GET", "http://example.test/v1/containers/x?token="+secret, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("query token on a plain request must be rejected, got %d", rec.Code)
 	}
 }
 
@@ -74,6 +94,8 @@ func TestAuthenticateQueryTokenWrong(t *testing.T) {
 	mw := newMiddleware()
 	handler := mw.Authenticate(mw.RateLimit(http.HandlerFunc(okHandler)))
 	req := httptest.NewRequest("GET", "http://example.test/v1/containers/x/terminal/ws?token=wrong", nil)
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Connection", "Upgrade")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {

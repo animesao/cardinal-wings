@@ -6,6 +6,7 @@ package auth
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -55,10 +56,14 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 		token := ""
 		if auth := r.Header.Get("Authorization"); len(auth) >= len(prefix) && auth[:len(prefix)] == prefix {
 			token = auth[len(prefix):]
-		} else if t := r.URL.Query().Get("token"); t != "" {
+		} else if t := r.URL.Query().Get("token"); t != "" && isWebSocketUpgrade(r) {
 			// Browser WebSockets cannot set the Authorization header, so the
-			// panel passes the API key as ?token= on the console WS URL. Only
-			// honored when the header is absent.
+			// panel passes the API key as ?token= on the console WS URL.
+			//
+			// Только для WebSocket-upgrade: в query-строке токен оседает в
+			// access-логах обратного прокси, в истории браузера и в
+			// заголовке Referer. На обычных маршрутах ?token= больше не
+			// принимается — там есть заголовок Authorization.
 			token = t
 		}
 		if token == "" {
@@ -75,6 +80,19 @@ func (m *Middleware) Authenticate(next http.Handler) http.Handler {
 		ctx = WithKeyName(ctx, name)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// isWebSocketUpgrade — запрос на апгрейд в WebSocket.
+func isWebSocketUpgrade(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
+		return false
+	}
+	for _, v := range r.Header.Values("Connection") {
+		if strings.Contains(strings.ToLower(v), "upgrade") {
+			return true
+		}
+	}
+	return false
 }
 
 // AdminOnly rejects requests that lack the admin role.
@@ -131,6 +149,11 @@ func (m *Middleware) RateLimitKey(next http.Handler) http.Handler {
 			if name, ok := KeyNameFrom(r.Context()); ok && name != "" {
 				id = "key:" + name
 			} else {
+				// Ключ ещё не проверен (лимитер стоит ДО аутентификации,
+				// см. server.go). Используем сырой заголовок: иначе бакет
+				// нельзя было бы создать до проверки ключа. Ограничение
+				// памяти — в pruneKeysLocked/maxClients, иначе случайный
+				// токен на каждый запрос раздувал бы карту бакетов.
 				id = "key:" + auth[len(prefix):]
 			}
 		}
@@ -138,7 +161,14 @@ func (m *Middleware) RateLimitKey(next http.Handler) http.Handler {
 		b, ok := m.keys[id]
 		if !ok {
 			if len(m.keys) >= m.maxClients() {
-				m.pruneKeysLocked(10 * time.Minute)
+				m.pruneKeysLocked(time.Minute)
+			}
+			if len(m.keys) >= 2*m.maxClients() {
+				// Не даём карте расти бесконечно: анонимный клиент может
+				// присылать случайные токены и создавать бакет на каждый.
+				m.mu.Unlock()
+				writeError(w, http.StatusTooManyRequests, "too many clients")
+				return
 			}
 			b = &bucket{tokens: float64(m.keyBurst()), last: time.Now()}
 			m.keys[id] = b

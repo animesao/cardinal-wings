@@ -20,18 +20,56 @@ import (
 // multicast, unspecified or otherwise reserved. RFC 1918 / LAN addresses
 // stay allowed on purpose: node-to-node backup transfers legitimately run
 // over private networks. Redirects are followed (mod CDNs redirect) but
-// every hop is re-validated. DNS-rebinding between check and connect is a
-// documented residual; the endpoints require an admin key.
+// every hop is re-validated.
+//
+// DNS-rebinding закрыт: адрес, прошедший проверку, ПИНИТСЯ и используется
+// при подключении (см. safeDialContext) — между проверкой и connect'ом имя
+// хоста больше не резолвится заново.
 
 // fetchTransport bounds handshake time; the caller's context bounds the body.
+//
+// DialContext РЕШАЕТ хост ОДИН раз и подключается к проверенному адресу.
+// Раньше здесь был обычный net.Dialer: имя хоста резолвилось повторно уже
+// в момент подключения, и проверенный адрес не пинился. Атака «DNS
+// rebinding» (первый ответ — публичный IP, второй — 127.0.0.1 или
+// 169.254.169.254) проходила проверку и уводила запрос во внутреннюю сеть.
+// Теперь адрес, прошедший checkFetchIP, используется напрямую.
 var fetchTransport = &http.Transport{
-	DialContext: (&net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}).DialContext,
+	DialContext:           safeDialContext,
 	TLSHandshakeTimeout:   30 * time.Second,
 	ResponseHeaderTimeout: 60 * time.Second,
 	ExpectContinueTimeout: 10 * time.Second,
+}
+
+// safeDialContext подключается только к адресам, прошедшим checkFetchIP.
+func safeDialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, err
+	}
+	dialer := &net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}
+
+	// Готовый IP: проверяем и подключаемся напрямую.
+	if ip := net.ParseIP(host); ip != nil {
+		if err := checkFetchIP(ip); err != nil {
+			return nil, fmt.Errorf("blocked address %s: %w", ip, err)
+		}
+		return dialer.DialContext(ctx, network, addr)
+	}
+
+	// Имя хоста: резолвим ОДИН раз, проверяем ВСЕ адреса и подключаемся
+	// к первому разрешённому.
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
+	if err != nil || len(ips) == 0 {
+		return nil, fmt.Errorf("cannot resolve %q", host)
+	}
+	for _, ip := range ips {
+		if err := checkFetchIP(ip); err != nil {
+			continue
+		}
+		return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+	}
+	return nil, fmt.Errorf("host %q resolves only to blocked addresses", host)
 }
 
 // validateFetchURL parses rawURL and rejects anything outside the fetch

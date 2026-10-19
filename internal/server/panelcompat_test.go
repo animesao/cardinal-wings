@@ -179,8 +179,11 @@ func TestIsMutatingBackupDelete(t *testing.T) {
 	if !isMutating("backup", "DELETE") {
 		t.Fatal("DELETE backup must be admin-only")
 	}
-	if isMutating("backup", "GET") {
-		t.Fatal("GET backup must stay readable")
+	// GET backup отдаёт полный архив каталога данных контейнера. В wings
+	// нет авторизации по контейнерам, поэтому скачивание тоже только
+	// для admin-ключа: иначе readonly-ключ забирал данные всех арендаторов.
+	if !isMutating("backup", "GET") {
+		t.Fatal("GET backup must be admin-only too (full data-dir archive)")
 	}
 }
 

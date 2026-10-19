@@ -19,6 +19,14 @@ const maxJSONBodyBytes = 8 << 20 // 8 MiB
 // panel (384 MiB covers the base64 overhead of 256 MiB files).
 const maxFmWriteBytes = 384 << 20 // 384 MiB
 
+// maxUploadZipBytes caps fm/upload-zip bodies.
+//
+// Раньше маршрут был ИСКЛЮЧЁН из общего лимита тела запроса («свой лимит»
+// внутри unzip), но фактического лимита не было: decodeBody читал тело
+// целиком в память, а потом base64 декодировал его ещё раз. Запрос на 20 ГБ
+// давал ~35 ГБ RSS и убивал wings вместе со всеми контейнерами.
+const maxUploadZipBytes = 384 << 20 // 384 MiB
+
 // bodyLimitMiddleware rejects oversized bodies before handlers buffer them.
 // Streaming upload routes carry their own caps and are exempt.
 func bodyLimitMiddleware(next http.Handler) http.Handler {
@@ -31,23 +39,42 @@ func bodyLimitMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		cap := int64(maxJSONBodyBytes)
-		if isFmWriteRoute(r) {
-			cap = maxFmWriteBytes
-		}
+		cap := bodyCapFor(r)
 		r.Body = http.MaxBytesReader(w, r.Body, cap)
 		next.ServeHTTP(w, r)
 	})
 }
 
+// bodyCapFor — лимит тела запроса для конкретного маршрута.
+func bodyCapFor(r *http.Request) int64 {
+	switch {
+	case isFmUploadZipRoute(r):
+		return maxUploadZipBytes
+	case isFmWriteRoute(r):
+		return maxFmWriteBytes
+	default:
+		return maxJSONBodyBytes
+	}
+}
+
 // largeBodyRoute reports whether the request is a known streaming upload
-// with its own size enforcement (backup restore, zip upload).
+// with its own size enforcement (backup restore).
 func largeBodyRoute(r *http.Request) bool {
 	if r.Method != http.MethodPost && r.Method != http.MethodPut {
 		return false
 	}
 	p := r.URL.Path
-	return strings.HasSuffix(p, "/backup") || strings.HasSuffix(p, "/fm/upload-zip")
+	return strings.HasSuffix(p, "/backup")
+}
+
+// isFmUploadZipRoute matches the zip upload route: it carries a base64
+// archive in a JSON body, so it needs its own (generous) cap — но не
+// бесконечный.
+func isFmUploadZipRoute(r *http.Request) bool {
+	if r.Method != http.MethodPost && r.Method != http.MethodPut {
+		return false
+	}
+	return strings.HasSuffix(r.URL.Path, "/fm/upload-zip")
 }
 
 // isFmWriteRoute matches whole-file base64 uploads (fm/write and its

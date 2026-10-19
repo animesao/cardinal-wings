@@ -204,27 +204,22 @@ func isMutating(action, method string) bool {
 	case "sftp", "ports":
 		return method != http.MethodGet
 	}
-	// Backup snapshot/restore/delete are mutating; live download (GET) is a
-	// read, same as fm/download.
+	// Backup: и скачивание архива тоже требует admin — это полный дамп
+	// каталога данных контейнера.
 	if action == "backup" {
-		return method != http.MethodGet
-	}
-	// File manager: reads (list/read/download) are non-mutating; the write ops
-	// and every other fm action require admin.
-	if strings.HasPrefix(action, "fm/") {
-		return rwFmMutating(action)
-	}
-	return action == "" && method == http.MethodDelete
-}
-
-// rwFmMutating reports whether an fm action mutates the container filesystem.
-func rwFmMutating(action string) bool {
-	switch {
-	case strings.HasPrefix(action, "fm/list"), strings.HasPrefix(action, "fm/read"), strings.HasPrefix(action, "fm/download"):
-		return false
-	default:
 		return true
 	}
+	// File manager: ВСЕ операции fm/* (включая чтение) требуют admin.
+	//
+	// Раньше чтение (fm/list, fm/read, fm/download) и GET backup были
+	// доступны ключу с ролью readonly. В wings НЕТ авторизации по
+	// контейнерам: любой ключ видит любой контейнер на ноде, поэтому
+	// readonly-ключ (например, для мониторинга) читал ФАЙЛЫ ВСЕХ
+	// арендаторов ноды. Читать файлы теперь может только admin-ключ.
+	if strings.HasPrefix(action, "fm/") {
+		return true
+	}
+	return action == "" && method == http.MethodDelete
 }
 
 func handleContainerCreate(w http.ResponseWriter, r *http.Request) {

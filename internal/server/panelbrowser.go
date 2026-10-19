@@ -32,20 +32,23 @@ import (
 
 // panelBrowserRoutes mounts the no-Bearer public routes. They carry their
 // own JWT auth, so they live on the public mux next to /v1/ping.
+//
+// Маршруты оборачиваются в auditMiddleware: POST /upload/file пишет файлы
+// в контейнер, и без аудита такая запись не попадала в wings-audit.jsonl.
 func panelBrowserRoutes(mux *http.ServeMux, cfg *config.Config) {
+	mux.Handle("/upload/file", auditMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+			return
+		}
+		handleBrowserUpload(w, r, cfg)
+	})))
 	mux.HandleFunc("/download/file", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 			return
 		}
 		handleBrowserDownload(w, r, cfg)
-	})
-	mux.HandleFunc("/upload/file", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-			return
-		}
-		handleBrowserUpload(w, r, cfg)
 	})
 	mux.HandleFunc("/download/backup", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -161,7 +164,20 @@ func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		return
 	}
 
-	if err := r.ParseMultipartForm(100 << 20); err != nil {
+	// Лимиты загрузки. Раньше тело запроса читалось целиком
+	// (ParseMultipartForm), а ограничение было ПОФАЙЛОВЫМ (100 МиБ) и без
+	// ограничения числа файлов: один запрос с тысячей частей по 100 миБ
+	// забивал диск ноды (~100 ГБ) и убивал все контейнеры на ней.
+	// Маршрут публичный (собственная JWT-аутентификация), поэтому лимиты
+	// обязаны быть тут.
+	const (
+		maxUploadFiles     = 32
+		maxUploadTotal     = 512 << 20
+		maxUploadPerFile   = 100 << 20
+		maxUploadOverhead  = 1 << 20
+	)
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadTotal+maxUploadOverhead)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid multipart body: "+err.Error())
 		return
 	}
@@ -170,9 +186,25 @@ func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Con
 		writeError(w, http.StatusBadRequest, "no files uploaded")
 		return
 	}
+	if len(files) > maxUploadFiles {
+		writeError(w, http.StatusRequestEntityTooLarge, "too many files")
+		return
+	}
 	dir := r.URL.Query().Get("directory")
 	if dir == "" {
 		dir = "/"
+	}
+	// Каталог назначения должен быть ПОДПИСАН в JWT: иначе держатель
+	// токена на загрузку мог писать в любой каталог своего контейнера
+	// (включая /cardinal, где лежит бинарник-хелпер exec'а), хотя панель
+	// выдавала токен на конкретную папку.
+	if claims.Directory != "" && claims.Directory != dir {
+		writeError(w, http.StatusForbidden, "token directory mismatch")
+		return
+	}
+	if claims.Directory == "" && dir != "/" {
+		writeError(w, http.StatusForbidden, "token has no directory claim")
+		return
 	}
 
 	session, err := beginFMSession(claims.ServerUUID)
@@ -182,6 +214,7 @@ func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Con
 	}
 	defer session.Close()
 
+	var total int64
 	for _, fh := range files {
 		name := filepath.Base(fh.Filename)
 		if name == "" || name == "." || name == "/" {
@@ -207,11 +240,30 @@ func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Con
 			writeErr(w, http.StatusBadGateway, ErrUpstream, "write %s: %s", name, err.Error())
 			return
 		}
-		_, err = io.Copy(dst, io.LimitReader(src, 100<<20))
+		// Копируем с бюджетом: не более maxUploadTotal всего и не более
+		// maxUploadPerFile на файл.
+		remain := maxUploadTotal - total
+		if remain < 0 {
+			remain = 0
+		}
+		limit := int64(maxUploadPerFile)
+		if remain < limit {
+			limit = remain
+		}
+		n, err := io.Copy(dst, io.LimitReader(src, limit+1))
 		_ = src.Close()
 		_ = dst.Close()
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, ErrUpstream, "write %s: %s", name, err.Error())
+			return
+		}
+		if n > limit {
+			writeErr(w, http.StatusRequestEntityTooLarge, ErrBadRequest, "upload too large")
+			return
+		}
+		total += n
+		if total > maxUploadTotal {
+			writeErr(w, http.StatusRequestEntityTooLarge, ErrBadRequest, "upload too large")
 			return
 		}
 	}
@@ -286,7 +338,12 @@ func handleLegacyWS(w http.ResponseWriter, r *http.Request, cfg *config.Config) 
 		_ = conn.Close()
 		return
 	}
-	if claims.ServerUUID != "" && claims.ServerUUID != uuid {
+	// Привязка к серверу обязательна: пустой server_uuid больше НЕ считается
+	// «подойдёт любой сервер». Раньше проверка выглядела
+	// `if claims.ServerUUID != "" && claims.ServerUUID != uuid`, то есть
+	// токен без server_uuid открывал консоль ЛЮБОГО контейнера, названного
+	// в URL. Теперь требуем точное совпадение.
+	if claims.ServerUUID == "" || claims.ServerUUID != uuid {
 		wsSend(conn, "jwt error", "token server mismatch")
 		_ = conn.Close()
 		return
@@ -327,11 +384,19 @@ func handleLegacyWS(w http.ResponseWriter, r *http.Request, cfg *config.Config) 
 	defer terminals.removeIf(uuid, sess)
 
 	// Empty permission lists deny writes: only explicitly granted
-	// control.* (or admin wildcard) may act. Legacy tokens without a
+	// control.* (or the admin wildcard) may act. Legacy tokens without a
 	// permissions claim can still watch the console, never drive it.
+	//
+	// Сравнение ТОЧНОЕ. Раньше здесь стояло
+	// `p == perm || p == "admin.websocket.install" || p == "admin.websocket.transfer"`,
+	// то есть право «установить блюпринт» или «перенести сервер» давало
+	// также control.console / control.start / control.stop / control.restart
+	// и право вводить команды в консоль. Панель выдаёт
+	// admin.websocket.install пользователю для фичи «Установить» — и он
+	// получал полное управление сервером.
 	allow := func(perm string) bool {
 		for _, p := range claims.Permissions {
-			if p == perm || p == "admin.websocket.install" || p == "admin.websocket.transfer" {
+			if p == perm || p == "admin" {
 				return true
 			}
 		}

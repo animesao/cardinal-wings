@@ -17,7 +17,15 @@ func TestIsMutatingNewActions(t *testing.T) {
 	if !isMutating("export", http.MethodGet) {
 		t.Errorf("isMutating(%q, GET) = false, want true (full FS dump)", "export")
 	}
-	reads := []string{"top", "changes", "ports", "fm/download-zip"}
+	// Чтение файлов (fm/*) и скачивание бэкапа тоже только для admin:
+	// в wings нет авторизации по контейнерам, поэтому readonly-ключ читал
+	// файлы ВСЕХ арендаторов ноды.
+	for _, a := range []string{"fm/download-zip", "fm/list", "fm/read", "backup"} {
+		if !isMutating(a, http.MethodGet) {
+			t.Errorf("isMutating(%q, GET) = false, want true (tenant data)", a)
+		}
+	}
+	reads := []string{"top", "changes", "ports"}
 	for _, a := range reads {
 		if isMutating(a, http.MethodGet) {
 			t.Errorf("isMutating(%q, GET) = true, want false (read)", a)

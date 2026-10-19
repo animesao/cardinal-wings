@@ -113,13 +113,19 @@ func Run(cfg *config.Config) error {
 	panelRoutes(api, mw)
 	clusterRoutes(api, mw)
 
-	// The authenticated chain: CORS -> per-key rate limit -> per-IP rate
-	// limit -> bearer auth -> audit (audit runs last so key name and role
-	// are already in the request context).
+	// The authenticated chain: CORS -> body limit -> per-IP rate limit ->
+	// bearer auth -> per-key rate limit -> audit (audit runs last so key
+	// name and role are already in the request context).
+	//
+	// Порядок важен: лимитор по ключу стоит ПОСЛЕ аутентификации, иначе
+	// он не знает имени ключа и вынужден считать бакеты по сырому
+	// заголовку. Тогда случайный токен на каждый запрос создавал новый
+	// бакет, и карта бакетов росла без ограничения (~2 млн записей в сутки
+	// от неаутентифицированного клиента).
 	var handler http.Handler = api
 	handler = auditMiddleware(handler)
-	handler = mw.Authenticate(handler)
 	handler = mw.RateLimitKey(handler)
+	handler = mw.Authenticate(handler)
 	handler = mw.RateLimit(handler)
 	handler = bodyLimitMiddleware(handler)
 	handler = mw.CORS(handler)

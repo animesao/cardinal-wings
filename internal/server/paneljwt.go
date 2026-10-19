@@ -30,6 +30,7 @@ type panelClaims struct {
 	ServerUUID  string   `json:"server_uuid"`
 	Scope       string   `json:"scope"`
 	FilePath    string   `json:"file_path"`
+	Directory   string   `json:"directory"`
 	BackupUUID  string   `json:"backup_uuid"`
 	Permissions []string `json:"permissions"`
 	ExpiresAt   int64    `json:"exp"`
@@ -71,10 +72,12 @@ func verifyPanelJWT(token string, cfg *config.Config, strictExpiry bool) (*panel
 	for _, k := range cfg.Keys {
 		mac := hmac.New(sha256.New, []byte(k.Key))
 		mac.Write([]byte(signingInput))
+		// Сравниваем ВСЕ ключи, не прерываясь на первом совпадении: ранний
+		// break позволял по времени ответа определить, каким по счёту
+		// ключом подписан токен, и сколько ключей настроено.
 		if subtle.ConstantTimeCompare(sig, mac.Sum(nil)) == 1 {
 			matched = true
 			role = k.Role
-			break
 		}
 	}
 	if !matched {
