@@ -171,10 +171,10 @@ func handleBrowserUpload(w http.ResponseWriter, r *http.Request, cfg *config.Con
 	// Маршрут публичный (собственная JWT-аутентификация), поэтому лимиты
 	// обязаны быть тут.
 	const (
-		maxUploadFiles     = 32
-		maxUploadTotal     = 512 << 20
-		maxUploadPerFile   = 100 << 20
-		maxUploadOverhead  = 1 << 20
+		maxUploadFiles    = 32
+		maxUploadTotal    = 512 << 20
+		maxUploadPerFile  = 100 << 20
+		maxUploadOverhead = 1 << 20
 	)
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadTotal+maxUploadOverhead)
 	if err := r.ParseMultipartForm(8 << 20); err != nil {
