@@ -20,13 +20,14 @@
 # Environment:
 #   WINGS_OWNER=...  GitHub owner for releases (default animesao)
 #   WINGS_TLS=1      generate a self-signed cert and enable TLS
-#   WINGS_HOST=...   bind address (default 127.0.0.1; use 0.0.0.0 for remote panel)
+#   WINGS_HOST=...   bind address (default 0.0.0.0)
 #   WINGS_PORT=...   bind port   (default 8080)
 #   WINGS_SFTP=0|1   enable per-container SFTP server (default 1)
 #   WINGS_SFTP_HOST= bind address for SFTP (default 0.0.0.0)
 #   WINGS_SFTP_PORT= SFTP listen port (default 2022)
 #   WINGS_NO_FIREWALL=1  skip automatic firewall port opening
-#   WINGS_UPDATE_CARDINAL=1  also update the 'cardinal' runtime to latest (default 0)
+#   WINGS_UPDATE_CARDINAL=1  also update the 'cardinal' runtime to the latest
+#                            release (default 0). CARDINAL_VERSION pins the version
 #   WINGS_MIRROR=...    optional self-hosted mirror base for binaries
 #                       (default empty = GitHub Releases only)
 #   WINGS_SKIP_VERIFY=1 disable SHA256 verification against the mirror
@@ -52,6 +53,7 @@ WINGS_SFTP="${WINGS_SFTP:-1}"
 WINGS_SFTP_HOST="${WINGS_SFTP_HOST:-0.0.0.0}"
 WINGS_SFTP_PORT="${WINGS_SFTP_PORT:-2022}"
 WINGS_NO_FIREWALL="${WINGS_NO_FIREWALL:-0}"
+WINGS_UPDATE_CARDINAL="${WINGS_UPDATE_CARDINAL:-0}"
 WINGS_MIRROR="${WINGS_MIRROR:-}"
 WINGS_SKIP_VERIFY="${WINGS_SKIP_VERIFY:-0}"
 
@@ -359,8 +361,28 @@ install -m 644 "${UNIT_SRC}" "${SYSTEMD_DIR}/cardinal-wings.service"
 systemctl daemon-reload 2>/dev/null || true
 
 # ------------------------------------------------------------
-# 4. cardinal runtime check
+# 4. cardinal runtime: optional update + check
 # ------------------------------------------------------------
+# Флаг был объявлен, но ничего не делал: обновить и wings, и рантайм
+# одной командой было нельзя. Теперь WINGS_UPDATE_CARDINAL=1 ставит
+# последний релиз cardinal поверх текущего (config сохраняется).
+if [ "${WINGS_UPDATE_CARDINAL}" = "1" ]; then
+  echo "==> updating the cardinal runtime to the latest release"
+  CARDINAL_INSTALLER="$(mktemp "${TMPDIR:-/tmp}/cardinal-install.XXXXXX")"
+  if download "https://raw.githubusercontent.com/${OWNER}/cardinal/main/install.sh" "${CARDINAL_INSTALLER}"; then
+    if bash "${CARDINAL_INSTALLER}"; then
+      echo "    cardinal runtime updated: $(command -v cardinal >/dev/null 2>&1 && cardinal --version 2>/dev/null || echo ok)"
+    else
+      echo "    warning: cardinal update failed (continuing)" >&2
+      echo "    run manually: sudo bash ${CARDINAL_INSTALLER}" >&2
+    fi
+  else
+    echo "    warning: could not download the cardinal installer (continuing)" >&2
+    echo "    run manually: curl -fsSL https://raw.githubusercontent.com/${OWNER}/cardinal/main/install.sh | sudo bash" >&2
+  fi
+  rm -f "${CARDINAL_INSTALLER}"
+fi
+
 if have cardinal; then
   CARDINAL_BIN="$(command -v cardinal)"
   echo "==> cardinal runtime found: ${CARDINAL_BIN}"
