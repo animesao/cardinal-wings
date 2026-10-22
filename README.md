@@ -161,9 +161,9 @@ values into the panel's *Admin → Nodes → Add node* form.
 | `WINGS_NO_FIREWALL` | `0` | `1` skips automatic firewall opening |
 | `WINGS_MIRROR` | _(empty)_ | self-hosted mirror base (GitHub Releases layout) |
 | `WINGS_SKIP_VERIFY` | `0` | `1` disables SHA256 verification |
-| `WINGS_SYSTEMD_URL` | _(empty)_ | custom systemd unit URL |
+| `WINGS_SYSTEMD_URL` | _(empty)_ | custom systemd unit URL (**https only** - the unit runs as root) |
 | `WINGS_UPDATE_CARDINAL` | `0` | reserved: declared but not consumed by the script |
-| `WINGS_DATA_DIR` | _(cardinal data dir)_ | relocate wings state (audit log, SFTP store, panel link) |
+| `WINGS_DATA_DIR` | `/var/lib/cardinal-wings` | where wings keeps its state (audit log, SFTP store, tasks, backups) |
 
 The installer opens firewall ports automatically (skip with
 `WINGS_NO_FIREWALL=1`): the API port only for non-loopback binds, the SFTP
@@ -173,6 +173,37 @@ port only when SFTP is enabled on a non-loopback host. Backends in order:
 `/etc/iptables/rules.v4`, with a warning when persistence is unavailable —
 raw iptables rules are lost on reboot). Note the installer binds `0.0.0.0` by
 default while `config.example.toml` documents a loopback bind.
+
+### What the installer checks
+
+- **SHA-256 of the binary is always verified** (mirror and GitHub alike) and a
+  mismatch aborts the install. The checksum is taken from the release asset
+  `<asset>.sha256` (or the mirror's `SHA256SUMS`) and matched by file name, so
+  it works for both the `dist/<name>` and the plain `<name>` layouts.
+  `WINGS_SKIP_VERIFY=1` disables it — do not do that in production.
+- **The service is checked after the start.** If it did not come up, the
+  installer says so and points at `journalctl -u cardinal-wings` instead of
+  reporting success.
+- **The API key is printed only on the first install.** On a re-run the
+  installer points at `/etc/cardinal-wings/config.toml` instead of dumping the
+  secret into your terminal history or a CI log.
+
+The installer verifies the **binary** it downloads. The installer **script
+itself** is not verified when you pipe it from `main` — if that matters, take
+it from a release instead and check it against the published sum:
+
+```bash
+curl -fsSL -O https://github.com/animesao/cardinal-wings/releases/download/v0.5.17/install.sh
+curl -fsSL -O https://github.com/animesao/cardinal-wings/releases/download/v0.5.17/install.sh.sha256
+sha256sum -c install.sh.sha256 && sudo bash install.sh
+```
+
+### Where wings keeps its state
+
+`WINGS_DATA_DIR` (default `/var/lib/cardinal-wings`, created by the
+installer) holds `wings-audit.jsonl`, `sftp-users.json`, the SFTP host key,
+`wings-tasks.json` and the backup snapshots. The systemd unit sets the
+variable and the working directory, so none of these files land in `/`.
 
 > **Slow GitHub in your region?** Point the installer at a self-hosted mirror
 > with `WINGS_MIRROR=https://mirror.example.com/wings` (expects

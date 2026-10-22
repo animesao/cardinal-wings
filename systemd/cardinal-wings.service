@@ -8,14 +8,26 @@ Type=simple
 ExecStart=/usr/local/bin/cardinal-wings --config /etc/cardinal-wings/config.toml
 Restart=on-failure
 RestartSec=5s
-# Recommended: run as an unprivileged user that can read the config.
-# The daemon needs to reach cardinal's data dir; set User=cardinal if needed.
-# User=cardinal
+# Каталог состояния wings: аудит-лог, sftp-users.json, задачи, бэкапы.
+# Без него systemd работает из /, и эти файлы появляются в корне ФС.
+Environment=WINGS_DATA_DIR=/var/lib/cardinal-wings
+WorkingDirectory=/var/lib/cardinal-wings
+# Данные рантайма cardinal: wings управляет контейнерами через него.
 Environment=CARDINAL_DATA_DIR=/root/.cardinal
 # Реестровая политика: cardinal принимает pull только из allowlist (дефолт —
 # Docker Hub, ghcr.io, quay.io, gcr.io). Флаг наследуется запускаемым из
 # wings процессом cardinal serve. Свой реестр: cardinal registry allowlist add.
 Environment=CARDINAL_REGISTRY_STRICT=1
+# Умеренное ужесточение: сервису нужен root (управление контейнерами,
+# loop-устройства, iptables), поэтому защищаем то, что можно безопасно.
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=false
+ReadWritePaths=/var/lib/cardinal-wings /root/.cardinal
 StandardOutput=journal
 StandardError=journal
 

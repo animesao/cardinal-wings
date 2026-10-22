@@ -168,7 +168,10 @@ jobs:
           CGO_ENABLED=0 go build -trimpath \
             -ldflags="-s -w -buildid= -X github.com/animesao/cardinal-wings/internal/server.version=${{ steps.version.outputs.tag }}" \
             -o "dist/$out" .
-          sha256sum "dist/$out" > "dist/$out.sha256"
+          # Сумма в стандартном формате sha256sum: "<hash>  <имя файла>".
+          # Раньше здесь писалось "<hash>  dist/<имя>", и проверка
+          # "sha256sum -c" / grep по имени файла не срабатывала ни у кого.
+          ( cd dist && sha256sum "$out" > "$out.sha256" )
           echo "built dist/$out (${{ steps.version.outputs.tag }})"
 
       # Attach the installer once (amd64 row only) so the merged artifacts
@@ -178,7 +181,7 @@ jobs:
         run: |
           cp install.sh dist/install.sh
           chmod +x dist/install.sh
-          sha256sum dist/install.sh > dist/install.sh.sha256
+          ( cd dist && sha256sum install.sh > install.sh.sha256 )
 
       - uses: actions/upload-artifact@v4
         with:

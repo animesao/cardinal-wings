@@ -42,6 +42,8 @@ PREFIX="${PREFIX:-/usr/local}"
 BIN_DIR="${PREFIX}/bin"
 CONF_DIR="/etc/cardinal-wings"
 SYSTEMD_DIR="/etc/systemd/system"
+# Каталог состояния wings: аудит-лог, sftp-users.json, задачи, бэкапы.
+DATA_DIR="${WINGS_DATA_DIR:-/var/lib/cardinal-wings}"
 
 WINGS_TLS="${WINGS_TLS:-0}"
 WINGS_HOST="${WINGS_HOST:-0.0.0.0}"
@@ -135,7 +137,7 @@ else
     fi
     if [ -z "${MIRROR_VER}" ]; then
       echo "==> resolving latest release"
-      TMP_TAG="/tmp/cardinal-wings.latest.json"
+      TMP_TAG="$(mktemp "${TMPDIR:-/tmp}/cardinal-wings.latest.XXXXXX")"
       if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 25 -o "${TMP_TAG}" \
         "https://api.github.com/repos/${OWNER}/${REPO}/releases/latest"; then
         echo "error: could not fetch latest release info" >&2
@@ -161,10 +163,12 @@ else
 
   # Download the binary — try the site mirror first, then GitHub.
   dl_ok=0
+  sums_url=""
   if [ -n "${WINGS_MIRROR}" ]; then
     echo "==> downloading ${VERSION} (${ASSET}) from mirror"
     if download "${WINGS_MIRROR}/${VERSION}/${ASSET}" "${BIN_DIR}/cardinal-wings"; then
       dl_ok=1
+      sums_url="${WINGS_MIRROR}/${VERSION}/SHA256SUMS"
     else
       echo "    mirror unavailable — falling back to GitHub"
     fi
@@ -178,24 +182,42 @@ else
       echo "  sudo bash /tmp/install-wings.sh" >&2
       exit 1
     fi
+    # У каждого ассета релиза есть .sha256 рядом.
+    sums_url="https://github.com/${OWNER}/${REPO}/releases/download/${VERSION}/${ASSET}.sha256"
   fi
   chmod +x "${BIN_DIR}/cardinal-wings"
 
-  # Verify against the mirror's SHA256SUMS when available.
-  if [ "${WINGS_SKIP_VERIFY}" != "1" ] && [ -n "${WINGS_MIRROR}" ]; then
-    TMP_SUMS="/tmp/cardinal-wings.sha256"
-    rm -f "${TMP_SUMS}"
-    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 25 "${WINGS_MIRROR}/${VERSION}/SHA256SUMS" -o "${TMP_SUMS}" 2>/dev/null; then
-      expected="$(grep "  ${ASSET}$" "${TMP_SUMS}" | awk '{print $1}' || true)"
-      if [ -n "${expected}" ]; then
-        actual="$(sha256sum "${BIN_DIR}/cardinal-wings" | awk '{print $1}')"
-        if [ "${actual}" != "${expected}" ]; then
-          echo "error: SHA256 mismatch for ${ASSET}" >&2
-          rm -f "${BIN_DIR}/cardinal-wings" "${TMP_SUMS}"
-          exit 1
-        fi
-        echo "==> SHA256 verified (${expected:0:16}…)"
+  # ---- проверка контрольной суммы ----
+  # Раньше сумма проверялась только для зеркала, и даже там поиск не находил
+  # хеш: публикуется "<hash>  dist/<asset>", а искали "<hash>  <asset>".
+  # Теперь сверяем всегда (зеркало и GitHub) и по имени файла, независимо от
+  # префикса пути. Несовпадение — отказ, а не предупреждение.
+  if [ "${WINGS_SKIP_VERIFY}" = "1" ]; then
+    echo "==> SHA256 verification SKIPPED (WINGS_SKIP_VERIFY=1)"
+  elif [ -n "${sums_url}" ]; then
+    TMP_SUMS="$(mktemp "${TMPDIR:-/tmp}/cardinal-wings.sha256.XXXXXX")"
+    if curl -fsSL --retry 2 --connect-timeout 10 --max-time 30 "${sums_url}" -o "${TMP_SUMS}" 2>/dev/null; then
+      expected="$(awk -v name="${ASSET}" '
+        { n = $2; sub(/^\*/, "", n); sub(/^.*\//, "", n);
+          if (n == name) { print $1; exit } }' "${TMP_SUMS}")"
+      if [ -z "${expected}" ]; then
+        echo "error: no SHA256 for ${ASSET} in ${sums_url}" >&2
+        rm -f "${TMP_SUMS}"
+        exit 1
       fi
+      actual="$(sha256sum "${BIN_DIR}/cardinal-wings" | awk '{print $1}')"
+      if [ "${actual}" != "${expected}" ]; then
+        echo "error: SHA256 mismatch for ${ASSET}" >&2
+        echo "  expected ${expected}" >&2
+        echo "  actual   ${actual}" >&2
+        rm -f "${BIN_DIR}/cardinal-wings" "${TMP_SUMS}"
+        exit 1
+      fi
+      echo "==> SHA256 verified (${expected:0:16}…)"
+    else
+      echo "error: could not fetch ${sums_url} — refusing to install an unverified binary" >&2
+      rm -f "${TMP_SUMS}"
+      exit 1
     fi
     rm -f "${TMP_SUMS}"
   fi
@@ -267,6 +289,11 @@ fi
 # ------------------------------------------------------------
 # 3. systemd unit
 # ------------------------------------------------------------
+# Каталог состояния: без него systemd работает из /, и аудит-лог,
+# sftp-users.json и задачи появляются в корне файловой системы.
+mkdir -p "${DATA_DIR}"
+chmod 700 "${DATA_DIR}"
+
 # The systemd unit is embedded so the installer never needs GitHub for it.
 # Override with WINGS_SYSTEMD_URL to supply a custom unit.
 unit_body() {
@@ -281,6 +308,11 @@ Type=simple
 ExecStart=${BIN_DIR}/cardinal-wings --config ${CONF_DIR}/config.toml
 Restart=on-failure
 RestartSec=5s
+# Каталог состояния wings: аудит-лог, sftp-users.json, задачи, бэкапы.
+# Без него systemd работает из /, и эти файлы появляются в корне ФС.
+Environment=WINGS_DATA_DIR=${DATA_DIR}
+WorkingDirectory=${DATA_DIR}
+# Данные рантайма cardinal: wings управляет контейнерами через него.
 Environment=CARDINAL_DATA_DIR=/root/.cardinal
 # Реестровая политика. Флаг живёт в окружении wings, которое наследует
 # запускаемый им cardinal serve (internal/agent/local.go: cmd.Env =
@@ -289,6 +321,16 @@ Environment=CARDINAL_DATA_DIR=/root/.cardinal
 # поэтому обычные образы продолжают работать. Свой реестр добавляется
 # командой: cardinal registry allowlist add <host>.
 Environment=CARDINAL_REGISTRY_STRICT=${CARDINAL_REGISTRY_STRICT:-1}
+# Умеренное ужесточение: сервису нужен root (управление контейнерами,
+# loop-устройства, iptables), поэтому защищаем то, что можно безопасно.
+NoNewPrivileges=true
+PrivateTmp=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=false
+ReadWritePaths=${DATA_DIR} /root/.cardinal
 StandardOutput=journal
 StandardError=journal
 
@@ -296,9 +338,15 @@ StandardError=journal
 WantedBy=multi-user.target
 EOF
 }
-UNIT_SRC="/tmp/cardinal-wings.service"
+UNIT_SRC="$(mktemp "${TMPDIR:-/tmp}/cardinal-wings.service.XXXXXX")"
 unit_body > "${UNIT_SRC}"
 if [ -n "${WINGS_SYSTEMD_URL:-}" ]; then
+  case "${WINGS_SYSTEMD_URL}" in
+    https://*) ;;
+    *)
+      echo "error: WINGS_SYSTEMD_URL must be https:// (the unit is executed as root)" >&2
+      exit 1 ;;
+  esac
   echo "==> downloading custom systemd unit from WINGS_SYSTEMD_URL"
   if curl -fsSL --retry 2 --connect-timeout 10 "${WINGS_SYSTEMD_URL}" -o "${UNIT_SRC}"; then
     chmod 644 "${UNIT_SRC}"
@@ -421,6 +469,19 @@ else
   systemctl start cardinal-wings 2>/dev/null && echo "==> cardinal-wings started and enabled for next boot"
 fi
 
+# Старт проверяем: раньше "systemctl start" уходил в /dev/null, и при неудаче
+# установщик всё равно рапортовал об успехе.
+sleep 1
+if systemctl is-active --quiet cardinal-wings 2>/dev/null; then
+  echo "==> service is active"
+else
+  echo "" >&2
+  echo "error: the cardinal-wings service did not start." >&2
+  echo "  systemctl status cardinal-wings" >&2
+  echo "  journalctl -u cardinal-wings -n 50" >&2
+  echo "  (the binary and the config are installed; fix the cause and run: systemctl start cardinal-wings)" >&2
+fi
+
 echo
 echo "cardinal-wings installed: ${BIN_DIR}/cardinal-wings"
 echo
@@ -459,8 +520,13 @@ case "${WINGS_HOST}" in
     BIND_URL="${SCHEME}://${WINGS_HOST}:${WINGS_PORT}" ;;
 esac
 API_KEY="${API_KEY:-}"
+API_KEY_SHOWN=1
 if [ -z "${API_KEY}" ] && [ -f "${CONF_DIR}/config.toml" ]; then
   API_KEY="$(sed -n 's/^key *= *"\([^"]*\)".*/\1/p' "${CONF_DIR}/config.toml" | head -1)"
+  # Ключ уже был выдан при первой установке. Печатать его снова - значит
+  # разложить секрет в stdout установщика (он попадает в лог CI и в историю
+  # терминала). Показываем, где его взять, но не сам ключ.
+  API_KEY_SHOWN=0
 fi
 
 # Проверка связи с внешним IP (best-effort; ICMP может быть закрыт).
@@ -476,7 +542,12 @@ echo "  ============================================================"
 echo "   PANEL BINDING  —  впиши эти данные в форму \"New node\" панели"
 echo "   ------------------------------------------------------------"
 echo "   URL   : ${BIND_URL}"
-echo "   Token : ${API_KEY:-<read from ${CONF_DIR}/config.toml>}"
+if [ "${API_KEY_SHOWN}" = "1" ]; then
+  echo "   Token : ${API_KEY:-<см. ${CONF_DIR}/config.toml>}"
+else
+  echo "   Token : уже был выдан при первой установке - значение в ${CONF_DIR}/config.toml"
+  echo "           (секрет не печатается повторно, чтобы не попасть в логи)"
+fi
 [ -n "${PING_NOTE}" ] && echo "${PING_NOTE}"
 echo "  ------------------------------------------------------------"
 echo "   Панель → Admin → Nodes → Add node → URL + Token."
