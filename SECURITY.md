@@ -27,7 +27,9 @@ containers on every connected node, so we take reports seriously.
 - **Auth:** Bearer tokens with roles (`readonly`/`admin`); constant-time
   comparison. Admin-only mutations are enforced in handlers and audited.
 - **Rate limiting:** per-IP and per-key token buckets, configurable.
-- **Bind default:** loopback only. External binds require keys and TLS.
+- **Bind default:** loopback only. External binds require configured API keys;
+  TLS is strongly recommended but not enforced (a plain-HTTP external bind
+  starts with a warning).
 - **TLS:** supported; `WINGS_TLS=1` in install.sh generates a self-signed
   cert for testing (use a real cert in production).
 - **Audit log:** every mutating request is recorded to `wings-audit.jsonl`

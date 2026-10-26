@@ -4,7 +4,7 @@
 # Status: in development — schema may change.
 
 [server]
-host = "127.0.0.1"     # loopback by default; external binds need keys + TLS
+host = "127.0.0.1"     # loopback by default; external binds need keys, TLS is strongly recommended
 port = 8080
 # tls_cert = "/etc/cardinal-wings/server.crt"
 # tls_key  = "/etc/cardinal-wings/server.key"

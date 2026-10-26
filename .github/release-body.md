@@ -1,7 +1,7 @@
 **cardinal-wings** — the remote management REST API daemon for cardinal.
 
 > Early development. This is a building skeleton; the API and config are
-> still subject to change until a stable release. See [SPEC.md](SPEC.md).
+> still subject to change until a stable release. See [SPEC.md](https://github.com/animesao/cardinal-wings/blob/main/SPEC.md).
 
 ## What's in this release
 

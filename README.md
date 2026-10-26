@@ -97,7 +97,9 @@ curl -s localhost:8080/v1/ping   # pong
   `WINGS_DATA_DIR` to relocate; rotated at 10 MiB).
 - TLS supported in the config; `WINGS_TLS=1` in install.sh generates a
   self-signed cert and wires it up. Server timeouts are configurable.
-- Loopback-only by default; external binds require keys + TLS.
+- Loopback-only by default; external binds require configured API keys. TLS is
+  strongly recommended: a plain-HTTP external bind starts with a warning, it is
+  not refused.
 - **Webhooks** (`[[webhooks]]` in config) deliver `task.completed` and
   container events to panel URLs with an optional shared secret.
 
@@ -162,7 +164,7 @@ values into the panel's *Admin → Nodes → Add node* form.
 | `WINGS_MIRROR` | _(empty)_ | self-hosted mirror base (GitHub Releases layout) |
 | `WINGS_SKIP_VERIFY` | `0` | `1` disables SHA256 verification |
 | `WINGS_SYSTEMD_URL` | _(empty)_ | custom systemd unit URL (**https only** - the unit runs as root) |
-| `WINGS_UPDATE_CARDINAL` | `0` | reserved: declared but not consumed by the script |
+| `WINGS_UPDATE_CARDINAL` | `0` | `1` also installs/updates the `cardinal` runtime (see the warning in `docs/status/known-issues.md`, `K-07`) |
 | `WINGS_DATA_DIR` | `/var/lib/cardinal-wings` | where wings keeps its state (audit log, SFTP store, tasks, backups) |
 
 The installer opens firewall ports automatically (skip with
@@ -218,6 +220,10 @@ cluster facade → panel + site.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution guide and
 [SECURITY.md](SECURITY.md) for how to report a vulnerability.
+
+Maintainers and agents: start at [AGENTS.md](AGENTS.md); the documentation index
+is [docs/README.md](docs/README.md), and known drift is tracked in
+[docs/status/known-issues.md](docs/status/known-issues.md).
 
 ## License
 
