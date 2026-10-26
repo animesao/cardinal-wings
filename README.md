@@ -195,8 +195,8 @@ itself** is not verified when you pipe it from `main` — if that matters, take
 it from a release instead and check it against the published sum:
 
 ```bash
-curl -fsSL -O https://github.com/animesao/cardinal-wings/releases/download/v0.5.19/install.sh
-curl -fsSL -O https://github.com/animesao/cardinal-wings/releases/download/v0.5.19/install.sh.sha256
+curl -fsSL -O https://github.com/animesao/cardinal-wings/releases/download/v0.5.20/install.sh
+curl -fsSL -O https://github.com/animesao/cardinal-wings/releases/download/v0.5.20/install.sh.sha256
 sha256sum -c install.sh.sha256 && sudo bash install.sh
 ```
 
