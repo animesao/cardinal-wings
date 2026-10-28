@@ -17,7 +17,7 @@ toolchain go1.26.10
 // needed here.
 
 require (
-	github.com/pkg/sftp v1.13.11
+	github.com/pkg/sftp v1.13.12
 	golang.org/x/crypto v0.57.0
 )
 
