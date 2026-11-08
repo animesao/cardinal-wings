@@ -52,6 +52,35 @@ func validateTarStream(r io.Reader) error {
 	}
 }
 
+// ensureNoSymlinkAncestors verifies that all existing path components between
+// root and target are genuine directories, preventing directory traversal via symlinks.
+func ensureNoSymlinkAncestors(root, target string) error {
+	rel, err := filepath.Rel(root, target)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("path escapes root: %s", target)
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	current := root
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				// Remaining components do not exist yet; safe to create.
+				break
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("symlink ancestor forbidden: %s", current)
+		}
+	}
+	return nil
+}
+
 // tarSymlink is a validated in-root symlink, created after all regular
 // entries so a later archive entry cannot redirect an earlier one.
 type tarSymlink struct {
@@ -99,12 +128,21 @@ func extractTarGz(dest string, src io.Reader) error {
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
+			if err := ensureNoSymlinkAncestors(dest, target); err != nil {
+				return fmt.Errorf("unsafe directory %q: %w", h.Name, err)
+			}
 			if err := os.MkdirAll(target, 0755); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
+			if err := ensureNoSymlinkAncestors(dest, target); err != nil {
+				return fmt.Errorf("unsafe file %q: %w", h.Name, err)
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
+			}
+			if fi, err := os.Lstat(target); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+				_ = os.Remove(target)
 			}
 			out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 			if err != nil {

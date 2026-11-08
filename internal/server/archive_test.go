@@ -124,3 +124,22 @@ func TestExtractTarGzSkipsUnsafeLinks(t *testing.T) {
 		}
 	}
 }
+
+func TestExtractTarGzRejectsSymlinkAncestors(t *testing.T) {
+	dir := t.TempDir()
+	outside := t.TempDir()
+	// Pre-create a symlink inside dir pointing to outside directory
+	linkPath := filepath.Join(dir, "escapelink")
+	if err := os.Symlink(outside, linkPath); err != nil {
+		t.Skipf("symlink creation not supported on this platform: %v", err)
+	}
+
+	data := buildTarGz(t, []tar.Header{{Name: "escapelink/pwned.txt", Mode: 0644}}, map[string]string{"escapelink/pwned.txt": "evil content"})
+	if err := extractTarGz(dir, bytes.NewReader(data)); err == nil {
+		t.Fatal("expected extract through symlink ancestor to fail")
+	}
+
+	if _, err := os.Stat(filepath.Join(outside, "pwned.txt")); !os.IsNotExist(err) {
+		t.Fatal("file was written to outside directory via symlink ancestor traversal")
+	}
+}

@@ -87,7 +87,7 @@ func streamBackup(w http.ResponseWriter, r *http.Request, ref, root string) {
 	// Prefer archiving on the host (works for every image).
 	if hostRoot, herr := hostDataRoot(ref); herr == nil {
 		if hostRoot != "/" && root != "" { // root arg is the container jail; ignore for host path
-			cmd := exec.Command("tar", "czf", "-", "-C", hostRoot, ".")
+			cmd := exec.Command("tar", "czf", "-", "-C", hostRoot, "--", ".")
 			cmd.Stderr = nil
 			out, err := cmd.StdoutPipe()
 			if err != nil {

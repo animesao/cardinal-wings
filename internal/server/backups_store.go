@@ -160,7 +160,7 @@ func tarDataRootTo(w io.Writer, hasher io.Writer, containerID, root string) (int
 	mw := io.MultiWriter(w, hasher)
 	counter := &countWriter{w: mw}
 	if hostRoot, herr := hostDataRoot(containerID); herr == nil && hostRoot != "/" {
-		cmd := exec.Command("tar", "czf", "-", "-C", hostRoot, ".")
+		cmd := exec.Command("tar", "czf", "-", "-C", hostRoot, "--", ".")
 		cmd.Stderr = nil
 		out, err := cmd.StdoutPipe()
 		if err != nil {
